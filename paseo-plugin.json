@@ -1,0 +1,8 @@
+{
+  "id": "roster",
+  "name": "Roster",
+  "media": [],
+  "requirements": {
+    "paseo": ">=0.13.2"
+  }
+}
