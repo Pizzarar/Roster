@@ -68,7 +68,7 @@ const SWITCHES: readonly { key: SwitchKey; label: string; hint: string }[] = [
   { key: "detachNewLeads", label: "Detach new leads", hint: "A lead created by another agent is detached at once, so its spawner stops being woken for it." },
   { key: "adoptWorkers", label: "Hand workers to the new lead", hint: "On a handoff, the old lead's live workers are detached and assigned to the new lead." },
   { key: "relayWorkerEvents", label: "Relay handed-over workers", hint: "Their finished, failed and permission events are sent to the lead that owns them now." },
-  { key: "labelInstruction", label: "Ask new agents to label themselves", hint: "Adds a line to every new agent's system prompt asking it to set role, group and task labels." },
+  { key: "labelInstruction", label: "Ask new agents to name and label themselves", hint: "Adds a line to every new agent's system prompt asking brainstorm chats and leads to title themselves and all agents to set role, group and task labels." },
 ];
 
 function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps["theme"] }) {

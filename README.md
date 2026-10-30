@@ -127,7 +127,7 @@ Find them under **Settings → Plugins → Roster**, or **Ctrl+K → Roster sett
 - **Show Stop on running agents**: turn this off for a strictly read-only board.
 - **Count sub-agents**: turn this off to skip the timeline polling described below.
 - **Detach new leads**, **Hand workers to the new lead**, **Relay handed-over workers**: the three parts of [lead handoffs](#lead-handoffs). All on by default.
-- **Ask new agents to label themselves**: off by default. Adds one line to every new agent's system prompt asking it to set `role`, `lead` and `task` labels with Paseo's `update_agent` tool, so Roster can group them without title rules.
+- **Ask new agents to name and label themselves**: off by default. Adds one line to every new agent's system prompt asking brainstorm chats and leads to title themselves (`BRAINSTORM · <topic>`, `★ LEAD · <project>`) and all agents to set `role`, `lead` and `task` labels with Paseo's `update_agent` tool (or `paseo agent update`).
 - **Stale workspace days**: how many idle days make a workspace a cleanup candidate.
 
 ## Sub-agent counts

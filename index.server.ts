@@ -9,7 +9,7 @@ const LEAD_POINTER =
   "To find a project's current lead: run `paseo ls -g --json` and pick the agent whose cwd matches the project and whose name starts with ★ LEAD (never one starting with (old)).";
 
 const LABEL_INSTRUCTION =
-  "Roster labels: once you know your role, label yourself with Paseo's update_agent tool. A lead sets role=lead and lead=<project>; a brainstorm chat sets role=brainstorm; a worker sets role=worker, its lead's lead=<project> and task=<short task name>. Pass lead=<project> on to agents you spawn.";
+  'Roster: once you know your role, set your title and labels with Paseo\'s update_agent tool (or `paseo agent update <PASEO_AGENT_ID> --name ... --label ...` if the MCP tool is unavailable). A lead sets title `★ LEAD · <project>` and labels `role=lead,lead=<project>`; a brainstorm chat sets title `BRAINSTORM · <topic>` and label `role=brainstorm`; a worker sets labels `role=worker,lead=<project>,task=<short task name>`. Pass `lead=<project>` on to agents you spawn.';
 
 function appendLine(systemPrompt: string, line: string): string {
   if (systemPrompt.includes(line)) return systemPrompt;
