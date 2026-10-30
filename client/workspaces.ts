@@ -235,6 +235,17 @@ export interface WorkspaceRow {
   readonly verdict: CleanupVerdict;
 }
 
+/** Something the user should act on: uncommitted work, unmerged commits, or an open PR. Not mere recent activity. */
+export function hasActionableWarning(row: WorkspaceRow): boolean {
+  const { workspace } = row;
+  const merged = workspace.merged || workspace.pr?.merged === true;
+  return (
+    Boolean(workspace.dirty) ||
+    Boolean(workspace.ahead && workspace.ahead > 0 && !merged) ||
+    Boolean(workspace.pr && !merged && workspace.pr.state.toUpperCase() === "OPEN")
+  );
+}
+
 function plural(count: number, word: string) {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
