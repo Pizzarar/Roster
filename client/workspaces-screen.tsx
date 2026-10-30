@@ -2,6 +2,7 @@ import { usePaseo, useRpc, type PluginScreenProps } from "@getpaseo/plugin/clien
 import { copyText, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/ui";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
+import { autoArchiveStateRpc, runAutoArchiveRpc, type AutoArchiveState } from "../shared/auto-archive";
 import { checkWorkspaceMergesRpc } from "../shared/workspaces";
 import { makeStyles, Toggle, type Styles } from "./board";
 import type { BoardConfig } from "../shared/config";
@@ -163,6 +164,10 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
   const state = useWorkspaces();
   const now = useNow();
   const checkMerges = useRpc(checkWorkspaceMergesRpc);
+  const fetchAutoState = useRpc(autoArchiveStateRpc);
+  const runAutoArchive = useRpc(runAutoArchiveRpc);
+  const [autoState, setAutoState] = useState<AutoArchiveState | null>(null);
+  const [showAutoLog, setShowAutoLog] = useState(false);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<WorkspaceSort>("cleanup");
   const [filter, setFilter] = useState<Filter>("all");
@@ -195,6 +200,28 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.status, worktreeKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchAutoState({}).then(
+      (res) => {
+        if (!cancelled) setAutoState(res);
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const runAuto = async (dryRun: boolean) => {
+    try {
+      setAutoState(await runAutoArchive({ dryRun }));
+      if (dryRun) setShowAutoLog(true);
+    } catch (error) {
+      toast.error(`Auto-archive failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
 
   const rows = useMemo(() => {
     const agents = agentsByWorkspace(state.workspaces.values(), [...board.agents.values()]);
@@ -300,6 +327,68 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
           >
             <Text style={styles.text}>Retry</Text>
           </Pressable>
+        ) : null}
+      </View>
+
+      <View style={styles.group}>
+        <View style={[styles.row, { flexWrap: "wrap", justifyContent: "space-between" }]}>
+          <Text style={[styles.text, { flex: 1, minWidth: 160 }]}>
+            {autoState?.lastRunAt
+              ? `${autoState.lastRunDry ? "Dry run: would auto-archive" : "Auto-archived"} ${autoState.lastCount} item${autoState.lastCount === 1 ? "" : "s"} · ${relativeTime(autoState.lastRunAt, now)}`
+              : "Auto-archive ready"}
+          </Text>
+          <Pressable accessibilityRole="button" onPress={() => void runAuto(true)} style={styles.smallButton}>
+            <Text style={styles.text}>Dry run</Text>
+          </Pressable>
+          <ConfirmButton
+            theme={theme}
+            label="Run now"
+            armedLabel="Archive idle items?"
+            busyLabel="Archiving…"
+            accessibilityLabel="Run auto-archive now"
+            onConfirm={() => runAuto(false)}
+          />
+          <Pressable accessibilityRole="button" onPress={() => setShowAutoLog((v) => !v)} style={styles.smallButton}>
+            <Text style={styles.text}>{`View log (${autoState?.items.length ?? 0})`}</Text>
+          </Pressable>
+        </View>
+        {showAutoLog && autoState ? (
+          <View>
+            {autoState.items.length === 0 ? (
+              <View style={styles.row}>
+                <Text style={styles.muted}>Nothing logged yet.</Text>
+              </View>
+            ) : null}
+            {autoState.items.slice(0, 15).map((item) => (
+              <View key={`${item.id}-${item.at}`}>
+                <View style={styles.divider} />
+                <View style={[styles.row, { paddingVertical: 6 }]}>
+                  <Chip theme={theme} label={item.dryRun ? "[dry run]" : "[archived]"} tone={item.dryRun ? "muted" : "accent"} />
+                  <Chip theme={theme} label={item.kind} />
+                  <Text style={[styles.text, { flexShrink: 1 }]} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <Text style={[styles.muted, { flex: 1, minWidth: 0 }]} numberOfLines={1}>
+                    {item.reason} · {relativeTime(item.at, now)}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                      if (item.kind === "agent" && navigation) navigation.openAgent({ agentId: item.id });
+                      else
+                        copyText(item.id).then(
+                          () => toast.show("Id copied"),
+                          () => toast.error(`Could not copy: ${item.id}`),
+                        );
+                    }}
+                    style={styles.smallButton}
+                  >
+                    <Text style={styles.text}>{item.kind === "agent" && navigation ? "Open chat" : "Copy id"}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ))}
+          </View>
         ) : null}
       </View>
 

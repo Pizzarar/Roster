@@ -13,6 +13,7 @@ import { useAgentProfiles } from "./board";
 import {
   DEFAULT_SETTINGS,
   daysError,
+  hoursError,
   limitError,
   patternError,
   trackerError,
@@ -51,6 +52,9 @@ const TEXT_KEYS: readonly TextKey[] = [
   "leadLabel",
   "taskLabel",
   "staleWorkspaceDays",
+  "autoArchiveIntervalHours",
+  "autoArchiveAgentDays",
+  "autoArchiveWorkspaceDays",
 ];
 
 const PATTERN_KEYS: readonly TextKey[] = [
@@ -102,6 +106,9 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
   const invalid =
     PATTERN_KEYS.some((key) => patternError(draft.values[key]) !== null) ||
     daysError(draft.values.staleWorkspaceDays) !== null ||
+    hoursError(draft.values.autoArchiveIntervalHours) !== null ||
+    daysError(draft.values.autoArchiveAgentDays) !== null ||
+    daysError(draft.values.autoArchiveWorkspaceDays) !== null ||
     trackersError(draft.values.trackers);
   const setTrackers = useCallback(
     (update: (trackers: Tracker[]) => Tracker[]) =>
@@ -536,6 +543,52 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
             onChangeText={change("staleWorkspaceDays")}
             disabled={settings.saving}
             error={daysError(draft.values.staleWorkspaceDays)}
+          />
+        </SettingsCard>
+      </SettingsSection>
+      <SettingsSection title="Auto-archive">
+        <SettingsCard key={`auto-archive-${formKey}`}>
+          <SettingsSwitch
+            label="Auto-archive idle agents"
+            hint="Never touches leads, running agents, or brainstorms whose lead is still alive."
+            value={settings.values.autoArchiveAgents}
+            disabled={settings.saving}
+            onValueChange={toggle("autoArchiveAgents")}
+          />
+          <SettingsSwitch
+            label="Auto-archive safe workspaces (opt-in)"
+            hint="Only clean, merged, agent-free worktrees Paseo created. Deletes the folder."
+            value={settings.values.autoArchiveWorkspaces}
+            disabled={settings.saving}
+            onValueChange={toggle("autoArchiveWorkspaces")}
+          />
+          <SettingsSwitch
+            label="Dry run: show what would be archived"
+            hint="Logs matches on the Workspaces screen without archiving anything."
+            value={settings.values.autoArchiveDryRun}
+            disabled={settings.saving}
+            onValueChange={toggle("autoArchiveDryRun")}
+          />
+          <SettingsInput
+            label="Check interval (hours)"
+            initialValue={draft.values.autoArchiveIntervalHours}
+            onChangeText={change("autoArchiveIntervalHours")}
+            disabled={settings.saving}
+            error={hoursError(draft.values.autoArchiveIntervalHours)}
+          />
+          <SettingsInput
+            label="Idle agent threshold (days)"
+            initialValue={draft.values.autoArchiveAgentDays}
+            onChangeText={change("autoArchiveAgentDays")}
+            disabled={settings.saving}
+            error={daysError(draft.values.autoArchiveAgentDays)}
+          />
+          <SettingsInput
+            label="Idle workspace threshold (days)"
+            initialValue={draft.values.autoArchiveWorkspaceDays}
+            onChangeText={change("autoArchiveWorkspaceDays")}
+            disabled={settings.saving}
+            error={daysError(draft.values.autoArchiveWorkspaceDays)}
           />
         </SettingsCard>
       </SettingsSection>

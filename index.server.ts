@@ -1,9 +1,11 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { AutoArchiver } from "./server/auto-archive";
 import { createBrainstorm, renameBrainstorm } from "./server/brainstorm";
 import { Handoffs } from "./server/handoff";
 import { stopAgent } from "./server/stop";
 import { checkWorkspaceMerges } from "./server/workspaces";
 import { checkWorkspaceMergesRpc } from "./shared/workspaces";
+import { autoArchiveStateRpc, runAutoArchiveRpc } from "./shared/auto-archive";
 import { createBrainstormRpc, renameBrainstormRpc } from "./shared/brainstorm";
 import { fixChainedLeadsRpc, handoffStateRpc, promoteLeadRpc } from "./shared/handoff";
 import { rosterSettings } from "./shared/settings";
@@ -17,12 +19,22 @@ function appendLine(systemPrompt: string, line: string): string {
 export default function contribute(server: PluginServerContext) {
   const handoffs = new Handoffs(server.registerSettings(rosterSettings));
   const stopSettings = handoffs.start();
+  const autoArchiver = new AutoArchiver(() => handoffs.config);
+  const stopAutoArchive = autoArchiver.start();
 
   server.handle(stopAgentRpc, stopAgent);
+  server.handle(autoArchiveStateRpc, (_input, { paseo }) => {
+    autoArchiver.bind(paseo);
+    return autoArchiver.snapshot();
+  });
+  server.handle(runAutoArchiveRpc, ({ dryRun }, { paseo }) => autoArchiver.runPass({ dryRun, paseo }));
   server.handle(checkWorkspaceMergesRpc, checkWorkspaceMerges);
   server.handle(renameBrainstormRpc, renameBrainstorm);
   server.handle(createBrainstormRpc, (input, { paseo }) => createBrainstorm(input, paseo, handoffs.config));
-  server.handle(handoffStateRpc, () => handoffs.snapshot());
+  server.handle(handoffStateRpc, (_input, { paseo }) => {
+    autoArchiver.bind(paseo);
+    return handoffs.snapshot();
+  });
   server.handle(promoteLeadRpc, ({ agentId }, { paseo }) => handoffs.promote(agentId, paseo));
   server.handle(fixChainedLeadsRpc, (_input, { paseo }) => handoffs.fixChains(paseo));
 
@@ -43,8 +55,14 @@ export default function contribute(server: PluginServerContext) {
     return { ...request, config: { ...request.config, systemPrompt } };
   });
 
-  server.on("agent.created", ({ agent }, { paseo }) => handoffs.onCreated(agent, paseo));
-  server.on("agent.turn_started", ({ agent }, { paseo }) => handoffs.onTurnStarted(agent, paseo));
+  server.on("agent.created", ({ agent }, { paseo }) => {
+    autoArchiver.bind(paseo);
+    return handoffs.onCreated(agent, paseo);
+  });
+  server.on("agent.turn_started", ({ agent }, { paseo }) => {
+    autoArchiver.bind(paseo);
+    return handoffs.onTurnStarted(agent, paseo);
+  });
   server.on("agent.archived", ({ agent }) => handoffs.onArchived(agent));
   server.on("agent.turn_ended", ({ agent, outcome }, { paseo }) =>
     handoffs.relayTurnEnded(agent, outcome, paseo).catch((error) => console.error(`relay failed: ${error}`)),
@@ -56,6 +74,7 @@ export default function contribute(server: PluginServerContext) {
   );
 
   return async () => {
+    stopAutoArchive();
     (await stopSettings.catch(() => undefined))?.();
   };
 }

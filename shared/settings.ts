@@ -66,6 +66,14 @@ export const rosterSettings = defineSettings({
     trackers: z.array(trackerSchema).default(() => DEFAULT_TRACKERS.map((tracker) => ({ ...tracker }))),
     /** Workspaces idle this many days are cleanup candidates. */
     staleWorkspaceDays: z.string().trim().default("3"),
+    /** Archive agents idle this many days (never leads, running agents, or brainstorms with a live lead). */
+    autoArchiveAgents: z.boolean().default(true),
+    /** Archive clean, merged, agent-free Paseo worktrees idle this many days. */
+    autoArchiveWorkspaces: z.boolean().default(false),
+    autoArchiveDryRun: z.boolean().default(false),
+    autoArchiveIntervalHours: z.string().trim().default("6"),
+    autoArchiveAgentDays: z.string().trim().default("3"),
+    autoArchiveWorkspaceDays: z.string().trim().default("3"),
     brainstormPreset: z.boolean().default(true),
     /** Profile id or name for new brainstorms; empty picks the first "brainstorm" profile. */
     brainstormProfile: z.string().default(""),

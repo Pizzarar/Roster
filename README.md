@@ -15,6 +15,7 @@ It came out of two daily annoyances:
 
 A boxed panel with:
 
+- A **Leads** block pinned at the top, above the other sections.
 - A **Roster** header showing how many agents are running. Tap it to open the board.
 - One collapsible section per thing you track. By default that's **Leads** and **Brainstorm**; add, remove and reorder sections in settings. A section can show leads, brainstorm chats, agents whose folder contains some text, agents whose title matches a pattern, or agents with a given label.
 - One row per agent, with a status dot (running, idle, error), an attention marker, and a sub-agent count when it has any running. Each section shows up to its row limit, then "N more".
@@ -41,10 +42,13 @@ Open it from the sidebar, or with **Ctrl+K / ⌘K → Open Roster**.
 
 Open it from the **Workspaces** row in the sidebar, or with **Ctrl+K → Roster: workspaces and cleanup**.
 
-- Every workspace, kept live. Sort by cleanup candidates first, most recent, name or project, and optionally group by project.
+- Every workspace, kept live, grouped by project by default (toggle off for a flat list). Sort by cleanup candidates first, most recent, name or project. The lead or main workspace comes first in each group.
+- Compact one-line rows; tap `▸` to expand one for its branch, folder, reasons and a single **Archive** button. Idle workspaces with no agents fold into an **Idle (N)** bucket per project, and each project header has **Archive all safe (N)**.
+- **Merged PR detection**: squash-merged PRs and deleted upstream branches are detected (via `git` and `gh`, cached for 5 minutes), so merged worktrees count as safe to clean even when they still show commits ahead.
+- **Auto-archive banner**: last run, **Dry run**, **Run now** and a log of recent archives.
 - Filters: **safe to clean**, **check first** and **in use**.
 - Chips for branch, uncommitted changes, commits ahead, PR merged or open, and pinned.
-- **Archive** (tap twice) on one workspace, or **Archive N** for every safe one at once.
+- **Archive** (tap twice) on one expanded workspace, or **Archive N** for every safe one at once.
 - Archive is blocked for workspaces with running agents or services, pinned workspaces, Paseo worktrees with uncommitted changes, and anything that isn't a worktree.
 
 Archiving a Paseo-owned worktree deletes its folder, so the confirm button reads **Delete folder?**. A workspace counts as stale after the number of days in settings (3 by default).
@@ -122,7 +126,7 @@ Find them under **Settings → Plugins → Roster**, or **Ctrl+K → Roster sett
 
 - **Sidebar sections**: what the sidebar box tracks, top to bottom. **+ Add section** adds one; each has a name, what it shows (Leads, Brainstorm chats, Folder contains, Title matches, Label equals), a pattern where needed, and a row limit. For example, a section showing **Folder contains** `Brain Squad` tracks every live chat in that folder.
 - **Workflow presets**:
-  - **Brainstorm preset**: pinned Brainstorm matching and auto-naming prompt. Includes an independent switch to ask brainstorm chats to name and label themselves, prompt text customization, title pattern (`^BRAINSTORM\b`), and role label values. Can be removed to turn off brainstorm matching/auto-naming, and restored at any time.
+  - **Brainstorm preset**: pinned Brainstorm matching, plus the agent profile and mode used when Roster creates a new brainstorm (`brainstormProfile`, `brainstormModeId`; mode `auto` picks per provider), and auto-naming prompt. Includes an independent switch to ask brainstorm chats to name and label themselves, prompt text customization, title pattern (`^BRAINSTORM\b`), and role label values. Can be removed to turn off brainstorm matching/auto-naming, and restored at any time.
   - **Leads & handoffs preset**: full lead matching, handoffs, and prompts. Includes independent switches to ask leads/workers to name and label themselves (`leadPromptEnabled`), tell new agents how to find a project's lead (`leadPointerEnabled`), plus handoff toggles (`detachNewLeads`, `adoptWorkers`, `relayWorkerEvents`), title patterns (`leadTitlePattern`, `hideTitlePattern`, `sidebarStripPattern`), and role lists (`leadRoles`, `oldLeadRoles`). Can be removed to turn off lead matching, handoffs, and lead prompts, and restored at any time.
 - **Board & workspaces**:
   - **Group unlabelled agents by folder**: turn this off to put them all under Unassigned.
@@ -130,6 +134,7 @@ Find them under **Settings → Plugins → Roster**, or **Ctrl+K → Roster sett
   - **Count sub-agents**: turn this off to skip the timeline polling described below.
   - **Role / Group / Task label keys**: change these if you use custom label keys instead of `role`, `lead`, or `task`.
   - **Stale workspace days**: how many idle days make a workspace a cleanup candidate.
+- **Auto-archive**: archives idle agents (on by default; never leads, running agents, or brainstorms whose lead is alive) and, if you opt in, clean merged worktrees with no agents that Paseo created. Settings: check interval (hours), idle agent days, idle workspace days, and a **dry run** switch that only logs what would be archived. Runs at startup and on the interval; results show on the Workspaces screen.
 
 ## Sub-agent counts
 
