@@ -4,13 +4,12 @@ import {
   SettingsCard,
   SettingsInput,
   SettingsSection,
-  SettingsSelect,
   SettingsSwitch,
 } from "@getpaseo/plugin/client/ui";
 import { useCallback, useMemo, useState } from "react";
 import { Text } from "react-native";
-import { daysError, limitError, patternError, trackerError, trackerName } from "../shared/config";
-import { rosterSettings, type RosterSettings, type Tracker, type TrackerKind } from "../shared/settings";
+import { daysError, patternError } from "../shared/config";
+import { rosterSettings, type RosterSettings } from "../shared/settings";
 
 type Ready = Extract<SettingsState<typeof rosterSettings.schema>, { status: "ready" }>;
 type TextKey = {
@@ -37,30 +36,6 @@ const LABELS: readonly { key: TextKey; label: string; hint: string }[] = [
   { key: "staleWorkspaceDays", label: "Stale workspace days", hint: "Workspaces idle this long can be cleaned up." },
 ];
 
-const KIND_OPTIONS: readonly { label: string; value: TrackerKind }[] = [
-  { label: "Leads", value: "leads" },
-  { label: "Brainstorm chats", value: "brainstorm" },
-  { label: "Folder contains", value: "folder" },
-  { label: "Title matches", value: "title" },
-  { label: "Label equals", value: "label" },
-];
-
-const PATTERN_HINT: Partial<Record<TrackerKind, { label: string; hint: string; placeholder: string }>> = {
-  folder: { label: "Folder", hint: "Part of the agent's folder path, any case.", placeholder: "Brain Squad" },
-  title: { label: "Title pattern", hint: "Regular expression, case-insensitive.", placeholder: "^BRAINSTORM\b" },
-  label: { label: "Label", hint: "key=value", placeholder: "role=brainstorm" },
-};
-
-const KIND_HINT: Partial<Record<TrackerKind, string>> = {
-  leads: "Agents with a lead role label or a lead title.",
-  brainstorm: "Agents with a brainstorm role label or a brainstorm title.",
-};
-
-const newId = () => `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-
-const trackersError = (trackers: readonly Tracker[]) =>
-  trackers.some((tracker) => trackerError(tracker) !== null || limitError(tracker.limit) !== null);
-
 const SWITCHES: readonly { key: SwitchKey; label: string; hint: string }[] = [
   { key: "groupUnassignedByFolder", label: "Group unlabelled agents by folder", hint: "Otherwise they share one Unassigned group." },
   { key: "showStopButton", label: "Show Stop on running agents", hint: "Two taps; runs paseo stop on the daemon." },
@@ -68,7 +43,6 @@ const SWITCHES: readonly { key: SwitchKey; label: string; hint: string }[] = [
   { key: "detachNewLeads", label: "Detach new leads", hint: "A lead created by another agent is detached at once, so its spawner stops being woken for it." },
   { key: "adoptWorkers", label: "Hand workers to the new lead", hint: "On a handoff, the old lead's live workers are detached and assigned to the new lead." },
   { key: "relayWorkerEvents", label: "Relay handed-over workers", hint: "Their finished, failed and permission events are sent to the lead that owns them now." },
-  { key: "labelInstruction", label: "Ask new agents to label themselves", hint: "Adds a line to every new agent's system prompt asking it to set role, group and task labels." },
 ];
 
 function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps["theme"] }) {
@@ -80,38 +54,15 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
       setDraft((current) => ({ ...current, values: { ...current.values, [key]: text } })),
     [],
   );
-  const trackersDirty = JSON.stringify(draft.values.trackers) !== JSON.stringify(settings.values.trackers);
-  const dirty =
-    trackersDirty || PATTERNS.concat(LABELS).some(({ key }) => draft.values[key] !== settings.values[key]);
+  const dirty = PATTERNS.concat(LABELS).some(({ key }) => draft.values[key] !== settings.values[key]);
   const invalid =
     PATTERNS.some(({ key }) => patternError(draft.values[key]) !== null) ||
-    daysError(draft.values.staleWorkspaceDays) !== null ||
-    trackersError(draft.values.trackers);
-  const setTrackers = useCallback(
-    (update: (trackers: Tracker[]) => Tracker[]) =>
-      setDraft((current) => ({ ...current, values: { ...current.values, trackers: update(current.values.trackers) } })),
-    [],
-  );
-  const editTracker = useCallback(
-    (id: string, patch: Partial<Tracker>) =>
-      setTrackers((trackers) => trackers.map((tracker) => (tracker.id === id ? { ...tracker, ...patch } : tracker))),
-    [setTrackers],
-  );
-  const moveTracker = useCallback(
-    (index: number) =>
-      setTrackers((trackers) => {
-        const next = [...trackers];
-        [next[index - 1], next[index]] = [next[index]!, next[index - 1]!];
-        return next;
-      }),
-    [setTrackers],
-  );
+    daysError(draft.values.staleWorkspaceDays) !== null;
 
   // Text fields go on top of the latest saved values, so a switch flipped mid-edit is kept.
   const save = useCallback(async () => {
     const values = { ...settings.values };
     for (const { key } of PATTERNS.concat(LABELS)) values[key] = draft.values[key];
-    values.trackers = draft.values.trackers;
     if (await settings.save(values, settings.revision)) setDraft({ values, revision: settings.revision });
   }, [settings, draft]);
   const discard = useCallback(() => {
@@ -136,83 +87,6 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
 
   return (
     <>
-      <SettingsSection title="Sidebar sections">
-        {draft.values.trackers.map((tracker, index) => {
-          const pattern = PATTERN_HINT[tracker.kind];
-          return (
-            <SettingsCard key={`${tracker.id}-${formKey}`}>
-              <SettingsInput
-                label="Name"
-                hint={`Shown above the section. Empty uses "${trackerName({ ...tracker, name: "" })}".`}
-                initialValue={tracker.name}
-                onChangeText={(name) => editTracker(tracker.id, { name })}
-                disabled={settings.saving}
-              />
-              <SettingsSelect
-                label="Shows"
-                hint={KIND_HINT[tracker.kind]}
-                value={tracker.kind}
-                options={KIND_OPTIONS}
-                disabled={settings.saving}
-                onValueChange={(kind) => editTracker(tracker.id, { kind })}
-              />
-              {pattern ? (
-                <SettingsInput
-                  key={tracker.kind}
-                  label={pattern.label}
-                  hint={pattern.hint}
-                  placeholder={pattern.placeholder}
-                  initialValue={tracker.pattern}
-                  onChangeText={(text) => editTracker(tracker.id, { pattern: text })}
-                  disabled={settings.saving}
-                  error={trackerError(tracker)}
-                />
-              ) : null}
-              <SettingsInput
-                label="Most rows"
-                hint="The rest are counted and listed on the Roster screen."
-                initialValue={tracker.limit}
-                onChangeText={(limit) => editTracker(tracker.id, { limit })}
-                disabled={settings.saving}
-                error={limitError(tracker.limit)}
-              />
-              {index > 0 ? (
-                <SettingsAction label="Order" actionLabel="Move up" onPress={() => moveTracker(index)} />
-              ) : null}
-              <SettingsAction
-                label="Remove this section"
-                actionLabel="Remove"
-                onPress={() => setTrackers((trackers) => trackers.filter(({ id }) => id !== tracker.id))}
-              />
-            </SettingsCard>
-          );
-        })}
-        <SettingsCard>
-          <SettingsAction
-            label={
-              draft.values.trackers.length === 0
-                ? "No sections: the sidebar shows only Roster and Workspaces"
-                : "Track something else, such as a folder of brainstorm chats"
-            }
-            actionLabel="+ Add section"
-            disabled={settings.saving}
-            onPress={() =>
-              setTrackers((trackers) => [
-                ...trackers,
-                { id: newId(), name: "", kind: "folder", pattern: "", limit: "6" },
-              ])
-            }
-          />
-          {trackersDirty ? (
-            <SettingsAction
-              label={invalid ? "Fix the invalid value first" : "Sections changed"}
-              actionLabel="Save"
-              disabled={invalid || settings.saving}
-              onPress={() => void save()}
-            />
-          ) : null}
-        </SettingsCard>
-      </SettingsSection>
       <SettingsSection title="Behaviour">
         <SettingsCard>
           {SWITCHES.map(({ key, label, hint }) => (

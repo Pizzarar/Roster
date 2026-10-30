@@ -61,11 +61,6 @@ export class Handoffs {
     this.ready = this.load();
   }
 
-  /** The latest compiled settings. */
-  get config(): BoardConfig {
-    return this.cfg;
-  }
-
   async start(): Promise<() => void> {
     const apply = (state: Awaited<ReturnType<typeof this.settings.read>>) => {
       this.cfg = state.status === "ready" ? compileConfig(state.values) : DEFAULT_CONFIG;

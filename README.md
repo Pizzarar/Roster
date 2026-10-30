@@ -1,6 +1,6 @@
 # Roster
 
-A [Paseo](https://paseo.sh) plugin for people running a lot of agents at once. It pins the agents you care about (leads, brainstorm chats, or anything you pick) in a box above Workspaces in the sidebar, adds a board of every agent on the daemon grouped by who leads or spawned them, hands workers over cleanly when one lead replaces another, and gives you a screen for sorting and cleaning up workspaces.
+A [Paseo](https://paseo.sh) plugin for people running a lot of agents at once. It pins your lead agents above Workspaces in the sidebar, adds a board of every agent on the daemon grouped by who leads or spawned them, hands workers over cleanly when one lead replaces another, and gives you a screen for sorting and cleaning up workspaces.
 
 It came out of two daily annoyances:
 
@@ -13,14 +13,11 @@ It came out of two daily annoyances:
 
 **Sidebar (above Workspaces)**
 
-A boxed panel with:
+- One row per active lead, with a status dot (running, idle, error), an attention marker, and a sub-agent count when it has any running.
+- A Brainstorm row, if you have one.
+- A **Roster (N running)** row that opens the board.
 
-- A **Roster** header showing how many agents are running. Tap it to open the board.
-- One collapsible section per thing you track. By default that's **Leads** and **Brainstorm**; add, remove and reorder sections in settings. A section can show leads, brainstorm chats, agents whose folder contains some text, agents whose title matches a pattern, or agents with a given label.
-- One row per agent, with a status dot (running, idle, error), an attention marker, and a sub-agent count when it has any running. Each section shows up to its row limit, then "N more".
-- A **Workspaces** row.
-
-Tap an agent to jump to its chat. Closed and archived agents are never shown.
+Tap a lead to jump to its chat.
 
 **The Roster screen**
 
@@ -119,7 +116,6 @@ If your agents follow a naming rule instead, change the title patterns in settin
 
 Find them under **Settings → Plugins → Roster**, or **Ctrl+K → Roster settings**. They apply to everyone connected to the same daemon.
 
-- **Sidebar sections**: what the sidebar box tracks, top to bottom. **+ Add section** adds one; each has a name, what it shows (Leads, Brainstorm chats, Folder contains, Title matches, Label equals), a pattern where needed, and a row limit. For example, a section showing **Folder contains** `Brain Squad` tracks every live chat in that folder.
 - **Title patterns**: case-insensitive regular expressions for leads, retired leads and brainstorm. Leave one empty to turn it off.
 - **Sidebar label strip**: removed from lead titles in the sidebar. With the default, `★ LEAD · MAIN GAME ord47 (talk here: …)` shows as `MAIN GAME ord47`.
 - **Label keys and role values**: change these if you use something other than `role` / `lead` / `task`.
@@ -127,7 +123,6 @@ Find them under **Settings → Plugins → Roster**, or **Ctrl+K → Roster sett
 - **Show Stop on running agents**: turn this off for a strictly read-only board.
 - **Count sub-agents**: turn this off to skip the timeline polling described below.
 - **Detach new leads**, **Hand workers to the new lead**, **Relay handed-over workers**: the three parts of [lead handoffs](#lead-handoffs). All on by default.
-- **Ask new agents to label themselves**: off by default. Adds one line to every new agent's system prompt asking it to set `role`, `lead` and `task` labels with Paseo's `update_agent` tool, so Roster can group them without title rules.
 - **Stale workspace days**: how many idle days make a workspace a cleanup candidate.
 
 ## Sub-agent counts
@@ -161,6 +156,7 @@ The UI uses React Native primitives only, so it also works in the Paseo mobile a
 
 ## Roadmap
 
+- Optional: add a naming and labelling instruction to new agents, so leads label themselves automatically.
 - A lead-lookup tool for agents that follows handoffs, instead of the system-prompt line.
 - Use Paseo's own sub-agent list once plugins can reach it.
 - Open agents straight from the sidebar once the SDK allows it.

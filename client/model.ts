@@ -1,4 +1,4 @@
-import { isLeadAgent, normalizePath, PARENT_LABEL, type BoardConfig, type TrackerConfig } from "../shared/config";
+import { isLeadAgent, PARENT_LABEL, type BoardConfig } from "../shared/config";
 
 export type AgentStatus = "initializing" | "idle" | "running" | "error" | "closed";
 
@@ -34,23 +34,6 @@ export function agentKind(agent: BoardAgent, cfg: BoardConfig): AgentKind {
   if (cfg.leadTitle?.test(title)) return "lead";
   if (cfg.brainstormTitle?.test(title)) return "brainstorm";
   return "worker";
-}
-
-/** Whether a sidebar section shows this agent. Closed and archived agents never show. */
-export function isTracked(agent: BoardAgent, tracker: TrackerConfig, cfg: BoardConfig): boolean {
-  if (agent.archivedAt || agent.status === "closed") return false;
-  switch (tracker.kind) {
-    case "leads":
-      return agentKind(agent, cfg) === "lead";
-    case "brainstorm":
-      return agentKind(agent, cfg) === "brainstorm";
-    case "title":
-      return tracker.title?.test(agent.title ?? "") ?? false;
-    case "folder":
-      return tracker.folder !== "" && normalizePath(agent.cwd).includes(tracker.folder);
-    case "label":
-      return tracker.label !== null && agent.labels[tracker.label[0]] === tracker.label[1];
-  }
 }
 
 export function displayTitle(agent: BoardAgent): string {

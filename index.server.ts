@@ -8,14 +8,6 @@ import { stopAgentRpc } from "./shared/stop";
 const LEAD_POINTER =
   "To find a project's current lead: run `paseo ls -g --json` and pick the agent whose cwd matches the project and whose name starts with ★ LEAD (never one starting with (old)).";
 
-const LABEL_INSTRUCTION =
-  "Roster labels: once you know your role, label yourself with Paseo's update_agent tool. A lead sets role=lead and lead=<project>; a brainstorm chat sets role=brainstorm; a worker sets role=worker, its lead's lead=<project> and task=<short task name>. Pass lead=<project> on to agents you spawn.";
-
-function appendLine(systemPrompt: string, line: string): string {
-  if (systemPrompt.includes(line)) return systemPrompt;
-  return systemPrompt.trim() ? `${systemPrompt.trim()}\n\n${line}` : line;
-}
-
 export default function contribute(server: PluginServerContext) {
   const handoffs = new Handoffs(server.registerSettings(rosterSettings));
   const stopSettings = handoffs.start();
@@ -25,13 +17,12 @@ export default function contribute(server: PluginServerContext) {
   server.handle(promoteLeadRpc, ({ agentId }, { paseo }) => handoffs.promote(agentId, paseo));
   server.handle(fixChainedLeadsRpc, (_input, { paseo }) => handoffs.fixChains(paseo));
 
-  // Tell every new agent how to find a project's current lead, and optionally how to label itself.
+  // Tell every new agent how to find a project's current lead.
   server.before("agent.create", ({ request }) => {
-    const original = request.config.systemPrompt ?? "";
-    let systemPrompt = appendLine(original, LEAD_POINTER);
-    if (handoffs.config.labelInstruction) systemPrompt = appendLine(systemPrompt, LABEL_INSTRUCTION);
-    if (systemPrompt === original) return;
-    return { ...request, config: { ...request.config, systemPrompt } };
+    const systemPrompt = request.config.systemPrompt ?? "";
+    if (systemPrompt.includes(LEAD_POINTER)) return;
+    const merged = systemPrompt.trim() ? `${systemPrompt.trim()}\n\n${LEAD_POINTER}` : LEAD_POINTER;
+    return { ...request, config: { ...request.config, systemPrompt: merged } };
   });
 
   server.on("agent.created", ({ agent }, { paseo }) => handoffs.onCreated(agent, paseo));
