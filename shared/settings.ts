@@ -67,6 +67,10 @@ export const rosterSettings = defineSettings({
     /** Workspaces idle this many days are cleanup candidates. */
     staleWorkspaceDays: z.string().trim().default("3"),
     brainstormPreset: z.boolean().default(true),
+    /** Profile id or name for new brainstorms; empty picks the first "brainstorm" profile. */
+    brainstormProfile: z.string().default(""),
+    /** Mode for new brainstorms: `auto` (per provider), `profile`, or a literal mode id. */
+    brainstormModeId: z.string().default("auto"),
     brainstormPromptEnabled: z.boolean().default(true),
     brainstormPrompt: z.string().default(DEFAULT_BRAINSTORM_PROMPT),
     leadsPreset: z.boolean().default(true),

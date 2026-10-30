@@ -45,6 +45,8 @@ export interface BoardConfig {
   /** Milliseconds of inactivity before a workspace is a cleanup candidate. */
   readonly staleWorkspaceMs: number;
   readonly brainstormPreset: boolean;
+  readonly brainstormProfile: string;
+  readonly brainstormModeId: string;
   readonly leadsPreset: boolean;
   readonly brainstormPrompt: string;
   readonly leadPrompt: string;
@@ -188,6 +190,8 @@ export function compileConfig(values: RosterSettings): BoardConfig {
     trackers: values.trackers.map(compileTracker),
     staleWorkspaceMs: staleDays(values.staleWorkspaceDays) * DAY_MS,
     brainstormPreset: hasBrainstorm,
+    brainstormProfile: values.brainstormProfile.trim(),
+    brainstormModeId: values.brainstormModeId.trim() || "auto",
     leadsPreset: hasLeads,
     brainstormPrompt: hasBrainstorm ? (values.brainstormPromptEnabled ? values.brainstormPrompt.trim() : "") : "",
     leadPrompt: hasLeads ? (values.leadPromptEnabled ? values.leadPrompt.trim() : "") : "",

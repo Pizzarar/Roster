@@ -18,7 +18,7 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(stopAgentRpc, stopAgent);
   server.handle(renameBrainstormRpc, renameBrainstorm);
-  server.handle(createBrainstormRpc, (input, { paseo }) => createBrainstorm(input, paseo));
+  server.handle(createBrainstormRpc, (input, { paseo }) => createBrainstorm(input, paseo, handoffs.config));
   server.handle(handoffStateRpc, () => handoffs.snapshot());
   server.handle(promoteLeadRpc, ({ agentId }, { paseo }) => handoffs.promote(agentId, paseo));
   server.handle(fixChainedLeadsRpc, (_input, { paseo }) => handoffs.fixChains(paseo));

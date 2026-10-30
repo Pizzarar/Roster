@@ -82,6 +82,32 @@ export function makeStyles(theme: Theme, compact: boolean) {
 }
 export type Styles = ReturnType<typeof makeStyles>;
 
+export type AgentProfile = NonNullable<
+  Awaited<ReturnType<ReturnType<typeof usePaseo>["config"]["get"]>>["config"]["agentProfiles"]
+>[number];
+
+/** Daemon agent profiles, Brainstorm ones first. */
+export function useAgentProfiles(): AgentProfile[] {
+  const paseo = usePaseo();
+  const [profiles, setProfiles] = useState<AgentProfile[]>([]);
+  useEffect(() => {
+    let live = true;
+    void paseo.config
+      .get()
+      .then((res) => {
+        const config = res.config as typeof res.config & { daemon?: { agentProfiles?: AgentProfile[] } };
+        const all = config.agentProfiles ?? config.daemon?.agentProfiles ?? [];
+        const isBrainstorm = (p: AgentProfile) => /brainstorm/i.test(p.name);
+        if (live) setProfiles([...all].sort((a, b) => Number(isBrainstorm(b)) - Number(isBrainstorm(a))));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [paseo]);
+  return profiles;
+}
+
 export function Toggle({
   theme,
   label,
@@ -257,13 +283,16 @@ function BrainstormCoverageSection({
   styles,
   onRename,
   onCreate,
+  profiles,
 }: {
   coverage: BrainstormCoverage;
   theme: Theme;
   styles: Styles;
   onRename: (candidate: BrainstormCoverage["candidates"][number]) => Promise<unknown>;
-  onCreate: (missing: BrainstormCoverage["missingLeads"][number]) => Promise<unknown>;
+  onCreate: (missing: BrainstormCoverage["missingLeads"][number], profileId?: string) => Promise<unknown>;
+  profiles: readonly AgentProfile[];
 }) {
+  const [menuFor, setMenuFor] = useState<string | null>(null);
   return (
     <>
       <Text style={styles.section}>BRAINSTORM COVERAGE</Text>
@@ -304,16 +333,46 @@ function BrainstormCoverageSection({
                   {displayTitle(item.lead)} · {basename(item.lead.cwd)}
                 </Text>
               </View>
-              <ConfirmButton
-                theme={theme}
-                label="Create brainstorm"
-                armedLabel="Spawn chat?"
-                busyLabel="Creating…"
-                tone="accent"
-                accessibilityLabel={`Create brainstorm chat for ${item.area}`}
-                onConfirm={() => onCreate(item)}
-              />
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <ConfirmButton
+                  theme={theme}
+                  label="Create brainstorm"
+                  armedLabel="Spawn chat?"
+                  busyLabel="Creating…"
+                  tone="accent"
+                  accessibilityLabel={`Create brainstorm chat for ${item.area}`}
+                  onConfirm={() => onCreate(item)}
+                />
+                {profiles.length > 0 ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Choose profile for ${item.area} brainstorm`}
+                    onPress={() => setMenuFor(menuFor === item.lead.id ? null : item.lead.id)}
+                    style={[styles.smallButton, { borderColor: theme.colors.accent }]}
+                  >
+                    <Text style={{ color: theme.colors.accent, fontSize: 12 }}>▾</Text>
+                  </Pressable>
+                ) : null}
+              </View>
             </View>
+            {menuFor === item.lead.id ? (
+              <View style={[styles.row, { flexWrap: "wrap", paddingTop: 0 }]}>
+                {profiles.map((profile) => (
+                  <Pressable
+                    key={profile.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Spawn ${item.area} brainstorm with ${profile.name}`}
+                    onPress={() => {
+                      setMenuFor(null);
+                      void onCreate(item, profile.id);
+                    }}
+                    style={styles.smallButton}
+                  >
+                    <Text style={styles.text}>{profile.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
           </View>
         ))}
       </View>
@@ -435,6 +494,7 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
   const fixChainsRpc = useRpc(fixChainedLeadsRpc);
   const renameRpc = useRpc(renameBrainstormRpc);
   const createRpc = useRpc(createBrainstormRpc);
+  const profiles = useAgentProfiles();
   const [query, setQuery] = useState("");
   const [showOld, setShowOld] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -522,13 +582,15 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
       toast.error(`Rename failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
-  const createBrainstorm = async (missing: BrainstormCoverage["missingLeads"][number]) => {
+  const createBrainstorm = async (missing: BrainstormCoverage["missingLeads"][number], profileId?: string) => {
     try {
       const res = await createRpc({
         leadId: missing.lead.id,
         leadTitle: displayTitle(missing.lead),
         area: missing.area,
         cwd: missing.lead.cwd,
+        profile: profileId || cfg.brainstormProfile || undefined,
+        modeId: cfg.brainstormModeId || "auto",
       });
       if (res.ok) toast.show(res.message);
       else toast.error(res.message);
@@ -633,6 +695,7 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
           styles={styles}
           onRename={renameCandidate}
           onCreate={createBrainstorm}
+          profiles={profiles}
         />
       ) : null}
 

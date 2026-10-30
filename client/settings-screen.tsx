@@ -9,6 +9,7 @@ import {
 } from "@getpaseo/plugin/client/ui";
 import { useCallback, useMemo, useState } from "react";
 import { Text } from "react-native";
+import { useAgentProfiles } from "./board";
 import {
   DEFAULT_SETTINGS,
   daysError,
@@ -88,6 +89,7 @@ const trackersError = (trackers: readonly Tracker[]) =>
 function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps["theme"] }) {
   const [draft, setDraft] = useState(() => ({ values: settings.values, revision: settings.revision }));
   const [formKey, setFormKey] = useState(0);
+  const profiles = useAgentProfiles();
   const errorStyle = useMemo(() => ({ color: theme.colors.statusDanger }), [theme]);
   const change = useCallback(
     (key: TextKey) => (text: string) =>
@@ -238,6 +240,41 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
       <SettingsSection title="Workflow presets">
         {settings.values.brainstormPreset ? (
           <SettingsCard key={`brainstorm-${formKey}`}>
+            <SettingsSelect
+              label="Default brainstorm profile"
+              hint="Profile used when spawning a brainstorm chat from the board."
+              value={settings.values.brainstormProfile}
+              options={[
+                { label: "Auto (Brainstorm profile)", value: "" },
+                ...profiles.map((p) => ({
+                  label: `${p.name} (${p.model ? `${p.provider}/${p.model}` : p.provider})`,
+                  value: p.id,
+                })),
+              ]}
+              disabled={settings.saving}
+              onValueChange={(value) => {
+                const values = buildValues({ brainstormProfile: value });
+                void settings.save(values, settings.revision);
+                setDraft((current) => ({ ...current, values: { ...current.values, brainstormProfile: value } }));
+              }}
+            />
+            <SettingsSelect
+              label="Default brainstorm mode"
+              hint="Resolves each provider's real auto mode ID (Claude: auto, Gemini: accept-edits)."
+              value={settings.values.brainstormModeId}
+              options={[
+                { label: "Auto mode (per provider)", value: "auto" },
+                { label: "Profile default", value: "profile" },
+                { label: "Plan mode", value: "plan" },
+                { label: "Always ask / Default", value: "default" },
+              ]}
+              disabled={settings.saving}
+              onValueChange={(value) => {
+                const values = buildValues({ brainstormModeId: value });
+                void settings.save(values, settings.revision);
+                setDraft((current) => ({ ...current, values: { ...current.values, brainstormModeId: value } }));
+              }}
+            />
             <SettingsSwitch
               label="Ask brainstorm chats to name and label themselves"
               hint="Adds the prompt line below to new agents so brainstorm chats title themselves and set their role label."
