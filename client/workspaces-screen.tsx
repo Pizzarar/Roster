@@ -213,7 +213,7 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
             : state.status === "error"
               ? `Could not load workspaces: ${state.error ?? "unknown error"}`
               : "Loading workspaces…"}
-          {state.truncated ? " · showing the 500 most recent" : ""}
+          {state.truncated ? " · showing the 200 most recent" : ""}
         </Text>
         <Text style={styles.muted}>
           Archiving closes the workspace and archives its agents. For a worktree Paseo created, it also deletes the

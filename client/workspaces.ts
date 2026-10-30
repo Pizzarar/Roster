@@ -5,7 +5,7 @@ import type { BoardAgent } from "./model";
 type PaseoApi = PluginClientContext["paseo"];
 type Workspace = Awaited<ReturnType<PaseoApi["workspaces"]["list"]>>["entries"][number];
 
-const WORKSPACE_PAGE_LIMIT = 500;
+const WORKSPACE_PAGE_LIMIT = 200;
 
 /** The workspace fields Roster reads. */
 export interface BoardWorkspace {

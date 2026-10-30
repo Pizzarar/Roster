@@ -28,7 +28,7 @@ interface State {
 
 const MAX_HANDOFFS = 50;
 const LAST_MESSAGE_CHARS = 4000;
-const PAGE_LIMIT = 500;
+const PAGE_LIMIT = 200;
 
 function stateFile(): string {
   const home = process.env.PASEO_HOME || join(homedir(), ".paseo");
