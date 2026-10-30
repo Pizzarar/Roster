@@ -44,6 +44,19 @@ export interface BoardConfig {
   readonly trackers: readonly TrackerConfig[];
   /** Milliseconds of inactivity before a workspace is a cleanup candidate. */
   readonly staleWorkspaceMs: number;
+  readonly autoArchiveAgents: boolean;
+  readonly autoArchiveWorkspaces: boolean;
+  readonly autoArchiveDryRun: boolean;
+  readonly autoArchiveIntervalMs: number;
+  readonly autoArchiveAgentMs: number;
+  readonly autoArchiveWorkspaceMs: number;
+  readonly brainstormPreset: boolean;
+  readonly brainstormProfile: string;
+  readonly brainstormModeId: string;
+  readonly leadsPreset: boolean;
+  readonly brainstormPrompt: string;
+  readonly leadPrompt: string;
+  readonly leadPointerPrompt: string;
 }
 
 export const DEFAULT_SETTINGS: RosterSettings = rosterSettings.schema.parse({});
@@ -76,6 +89,12 @@ const DAY_MS = 86_400_000;
 export function daysError(value: string): string | null {
   const days = Number(value);
   return Number.isFinite(days) && days >= 0 ? null : "Enter a number of days, 0 or more";
+}
+
+/** Why an auto-archive interval is unusable, or null. */
+export function hoursError(value: string): string | null {
+  const hours = Number(value);
+  return Number.isFinite(hours) && hours >= 0.25 ? null : "Enter a number of hours, 0.25 or more";
 }
 
 const KIND_NAMES: Record<TrackerKind, string> = {
@@ -156,29 +175,58 @@ export function isLeadAgent(
   return cfg.leadTitle?.test(text) ?? false;
 }
 
+/** Whether an agent is a brainstorm: a brainstorm role, else a brainstorm title. Leads and retired titles never count. */
+export function isBrainstormAgent(
+  title: string | null | undefined,
+  labels: Readonly<Record<string, string>>,
+  cfg: BoardConfig,
+): boolean {
+  if (isLeadAgent(title, labels, cfg) || cfg.hideTitle?.test(title ?? "")) return false;
+  const role = labels[cfg.labels.role];
+  if (role !== undefined && cfg.brainstormRoles.includes(role)) return true;
+  if (role !== undefined && (cfg.leadRoles.includes(role) || cfg.oldLeadRoles.includes(role))) return false;
+  return cfg.brainstormTitle?.test(title ?? "") ?? false;
+}
+
 export function compileConfig(values: RosterSettings): BoardConfig {
+  const hasBrainstorm = values.brainstormPreset;
+  const hasLeads = values.leadsPreset;
+
   return {
-    leadTitle: compile(values.leadTitlePattern, "i"),
-    hideTitle: compile(values.hideTitlePattern, "i"),
-    brainstormTitle: compile(values.brainstormTitlePattern, "i"),
-    sidebarStrip: compile(values.sidebarStripPattern, "gi"),
+    leadTitle: hasLeads ? compile(values.leadTitlePattern, "i") : null,
+    hideTitle: hasLeads ? compile(values.hideTitlePattern, "i") : null,
+    brainstormTitle: hasBrainstorm ? compile(values.brainstormTitlePattern, "i") : null,
+    sidebarStrip: hasLeads ? compile(values.sidebarStripPattern, "gi") : null,
     labels: {
       role: values.roleLabel || "role",
       lead: values.leadLabel || "lead",
       task: values.taskLabel || "task",
     },
-    leadRoles: list(values.leadRoles),
-    oldLeadRoles: list(values.oldLeadRoles),
-    brainstormRoles: list(values.brainstormRoles),
+    leadRoles: hasLeads ? list(values.leadRoles) : [],
+    oldLeadRoles: hasLeads ? list(values.oldLeadRoles) : [],
+    brainstormRoles: hasBrainstorm ? list(values.brainstormRoles) : [],
     groupUnassignedByFolder: values.groupUnassignedByFolder,
     showStopButton: values.showStopButton,
     countSubagents: values.countSubagents,
-    detachNewLeads: values.detachNewLeads,
-    adoptWorkers: values.adoptWorkers,
-    relayWorkerEvents: values.relayWorkerEvents,
+    detachNewLeads: hasLeads ? values.detachNewLeads : false,
+    adoptWorkers: hasLeads ? values.adoptWorkers : false,
+    relayWorkerEvents: hasLeads ? values.relayWorkerEvents : false,
     labelInstruction: values.labelInstruction,
     trackers: values.trackers.map(compileTracker),
     staleWorkspaceMs: staleDays(values.staleWorkspaceDays) * DAY_MS,
+    autoArchiveAgents: values.autoArchiveAgents,
+    autoArchiveWorkspaces: values.autoArchiveWorkspaces,
+    autoArchiveDryRun: values.autoArchiveDryRun,
+    autoArchiveIntervalMs: (hoursError(values.autoArchiveIntervalHours) ? 6 : Number(values.autoArchiveIntervalHours)) * 3_600_000,
+    autoArchiveAgentMs: (daysError(values.autoArchiveAgentDays) ? 3 : Number(values.autoArchiveAgentDays)) * DAY_MS,
+    autoArchiveWorkspaceMs: (daysError(values.autoArchiveWorkspaceDays) ? 3 : Number(values.autoArchiveWorkspaceDays)) * DAY_MS,
+    brainstormPreset: hasBrainstorm,
+    brainstormProfile: values.brainstormProfile.trim(),
+    brainstormModeId: values.brainstormModeId.trim() || "auto",
+    leadsPreset: hasLeads,
+    brainstormPrompt: hasBrainstorm ? (values.brainstormPromptEnabled ? values.brainstormPrompt.trim() : "") : "",
+    leadPrompt: hasLeads ? (values.leadPromptEnabled ? values.leadPrompt.trim() : "") : "",
+    leadPointerPrompt: hasLeads ? (values.leadPointerEnabled ? values.leadPointerPrompt.trim() : "") : "",
   };
 }
 

@@ -1,5 +1,6 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { useEffect, useSyncExternalStore } from "react";
+import type { WorkspaceMergeInfo } from "../shared/workspaces";
 import type { BoardAgent } from "./model";
 
 type PaseoApi = PluginClientContext["paseo"];
@@ -28,6 +29,25 @@ export interface BoardWorkspace {
   readonly ahead: number | null;
   readonly pr: { readonly number: number | null; readonly state: string; readonly merged: boolean } | null;
   readonly runningServices: number;
+  /** The PR merged, or its upstream branch is gone (squash merges leave commits ahead). */
+  readonly merged: boolean;
+  readonly upstreamGone: boolean;
+}
+
+function applyMerge(workspace: BoardWorkspace, info: WorkspaceMergeInfo | undefined): BoardWorkspace {
+  if (!info) return workspace;
+  return {
+    ...workspace,
+    branch: workspace.branch ?? info.branch,
+    dirty: workspace.dirty ?? info.dirty,
+    merged: Boolean(workspace.pr?.merged || info.merged || info.upstreamGone),
+    upstreamGone: Boolean(info.upstreamGone),
+    pr: workspace.pr
+      ? { ...workspace.pr, number: workspace.pr.number ?? info.prNumber, merged: Boolean(workspace.pr.merged || info.merged) }
+      : info.merged
+        ? { number: info.prNumber, state: "MERGED", merged: true }
+        : null,
+  };
 }
 
 function toBoard(workspace: Workspace): BoardWorkspace {
@@ -52,6 +72,8 @@ function toBoard(workspace: Workspace): BoardWorkspace {
     ahead,
     pr: pr ? { number: pr.number ?? null, state: pr.state, merged: pr.isMerged } : null,
     runningServices: workspace.scripts.filter((script) => script.lifecycle === "running").length,
+    merged: pr?.isMerged === true,
+    upstreamGone: false,
   };
 }
 
@@ -77,6 +99,7 @@ class WorkspaceStore {
   private lifetime: AbortController | null = null;
   private release: (() => Promise<void>) | null = null;
   private generation = 0;
+  private merges = new Map<string, WorkspaceMergeInfo>();
 
   readonly subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -90,6 +113,14 @@ class WorkspaceStore {
   private set(patch: Partial<WorkspaceState>) {
     this.state = { ...this.state, ...patch };
     for (const listener of this.listeners) listener();
+  }
+
+  /** Fold server-side merge detection into the loaded workspaces. */
+  applyMerges(merges: Record<string, WorkspaceMergeInfo>) {
+    for (const [id, info] of Object.entries(merges)) this.merges.set(id, info);
+    const workspaces = new Map<string, BoardWorkspace>();
+    for (const [id, workspace] of this.state.workspaces) workspaces.set(id, applyMerge(workspace, this.merges.get(id)));
+    this.set({ workspaces });
   }
 
   start(paseo: PaseoApi) {
@@ -148,7 +179,7 @@ class WorkspaceStore {
       this.release = () => subscription.release();
       const replace = (entries: readonly Workspace[], hasMore: boolean) => {
         const workspaces = new Map<string, BoardWorkspace>();
-        for (const workspace of entries) if (!workspace.internal) workspaces.set(workspace.id, toBoard(workspace));
+        for (const workspace of entries) if (!workspace.internal) workspaces.set(workspace.id, applyMerge(toBoard(workspace), this.merges.get(workspace.id)));
         this.set({ status: "ready", error: null, workspaces, truncated: hasMore });
       };
       replace(result.entries, result.pageInfo.hasMore);
@@ -161,7 +192,7 @@ class WorkspaceStore {
           const payload = update.payload;
           const workspaces = new Map(this.state.workspaces);
           if (payload.kind === "upsert" && !payload.workspace.internal) {
-            workspaces.set(payload.workspace.id, toBoard(payload.workspace));
+            workspaces.set(payload.workspace.id, applyMerge(toBoard(payload.workspace), this.merges.get(payload.workspace.id)));
           } else {
             workspaces.delete(payload.kind === "upsert" ? payload.workspace.id : payload.id);
           }
@@ -204,6 +235,17 @@ export interface WorkspaceRow {
   readonly verdict: CleanupVerdict;
 }
 
+/** Something the user should act on: uncommitted work, unmerged commits, or an open PR. Not mere recent activity. */
+export function hasActionableWarning(row: WorkspaceRow): boolean {
+  const { workspace } = row;
+  const merged = workspace.merged || workspace.pr?.merged === true;
+  return (
+    Boolean(workspace.dirty) ||
+    Boolean(workspace.ahead && workspace.ahead > 0 && !merged) ||
+    Boolean(workspace.pr && !merged && workspace.pr.state.toUpperCase() === "OPEN")
+  );
+}
+
 function plural(count: number, word: string) {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
@@ -227,12 +269,14 @@ export function cleanupVerdict(
 
   const keep: string[] = [];
   const reasons: string[] = [];
-  const merged = workspace.pr?.merged === true;
+  const merged = workspace.merged || workspace.pr?.merged === true || workspace.upstreamGone;
   if (workspace.ahead && workspace.ahead > 0 && !merged) keep.push(`${plural(workspace.ahead, "unpushed commit")}`);
   if (workspace.pr && !merged && workspace.pr.state.toUpperCase() === "OPEN") keep.push("PR open");
   const last = Date.parse(workspace.activityAt ?? workspace.createdAt ?? "");
   const idleMs = Number.isFinite(last) ? now - last : Infinity;
-  if (merged) reasons.push("PR merged");
+  if (merged) {
+    reasons.push(workspace.pr?.number ? `PR #${workspace.pr.number} merged` : workspace.upstreamGone ? "merged (upstream deleted)" : "PR merged");
+  }
   if (idleMs >= staleMs) reasons.push(Number.isFinite(idleMs) ? `idle ${Math.floor(idleMs / 86_400_000)}d` : "no activity");
   else if (!merged) keep.push("recently active");
   if (agents.length > 0) reasons.push(`${plural(agents.length, "idle agent")} will be archived`);

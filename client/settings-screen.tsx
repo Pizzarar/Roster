@@ -9,8 +9,25 @@ import {
 } from "@getpaseo/plugin/client/ui";
 import { useCallback, useMemo, useState } from "react";
 import { Text } from "react-native";
-import { daysError, limitError, patternError, trackerError, trackerName } from "../shared/config";
-import { rosterSettings, type RosterSettings, type Tracker, type TrackerKind } from "../shared/settings";
+import { useAgentProfiles } from "./board";
+import {
+  DEFAULT_SETTINGS,
+  daysError,
+  hoursError,
+  limitError,
+  patternError,
+  trackerError,
+  trackerName,
+} from "../shared/config";
+import {
+  DEFAULT_BRAINSTORM_PROMPT,
+  DEFAULT_LEAD_POINTER,
+  DEFAULT_LEAD_PROMPT,
+  rosterSettings,
+  type RosterSettings,
+  type Tracker,
+  type TrackerKind,
+} from "../shared/settings";
 
 type Ready = Extract<SettingsState<typeof rosterSettings.schema>, { status: "ready" }>;
 type TextKey = {
@@ -20,21 +37,31 @@ type SwitchKey = {
   [Key in keyof RosterSettings]: RosterSettings[Key] extends boolean ? Key : never;
 }[keyof RosterSettings];
 
-const PATTERNS: readonly { key: TextKey; label: string; hint: string }[] = [
-  { key: "leadTitlePattern", label: "Lead title pattern", hint: "Agents pinned in the sidebar when they have no role label." },
-  { key: "hideTitlePattern", label: "Retired title pattern", hint: "Hidden unless Old leads is on." },
-  { key: "brainstormTitlePattern", label: "Brainstorm title pattern", hint: "Pinned below the leads as Brainstorm." },
-  { key: "sidebarStripPattern", label: "Sidebar label strip", hint: "Removed from lead titles in the sidebar." },
+const TEXT_KEYS: readonly TextKey[] = [
+  "brainstormPrompt",
+  "brainstormTitlePattern",
+  "brainstormRoles",
+  "leadPrompt",
+  "leadPointerPrompt",
+  "leadTitlePattern",
+  "hideTitlePattern",
+  "sidebarStripPattern",
+  "leadRoles",
+  "oldLeadRoles",
+  "roleLabel",
+  "leadLabel",
+  "taskLabel",
+  "staleWorkspaceDays",
+  "autoArchiveIntervalHours",
+  "autoArchiveAgentDays",
+  "autoArchiveWorkspaceDays",
 ];
 
-const LABELS: readonly { key: TextKey; label: string; hint: string }[] = [
-  { key: "roleLabel", label: "Role label key", hint: "Label whose value says lead, worker, and so on." },
-  { key: "leadRoles", label: "Lead roles", hint: "Comma-separated role values for active leads." },
-  { key: "oldLeadRoles", label: "Retired lead roles", hint: "Comma-separated role values hidden by default." },
-  { key: "brainstormRoles", label: "Brainstorm roles", hint: "Comma-separated role values for the brainstorm row." },
-  { key: "leadLabel", label: "Group label key", hint: "Agents sharing this label's value are grouped together." },
-  { key: "taskLabel", label: "Task label key", hint: "Shown as a chip on each row." },
-  { key: "staleWorkspaceDays", label: "Stale workspace days", hint: "Workspaces idle this long can be cleaned up." },
+const PATTERN_KEYS: readonly TextKey[] = [
+  "leadTitlePattern",
+  "hideTitlePattern",
+  "brainstormTitlePattern",
+  "sidebarStripPattern",
 ];
 
 const KIND_OPTIONS: readonly { label: string; value: TrackerKind }[] = [
@@ -61,19 +88,12 @@ const newId = () => `t${Date.now().toString(36)}${Math.random().toString(36).sli
 const trackersError = (trackers: readonly Tracker[]) =>
   trackers.some((tracker) => trackerError(tracker) !== null || limitError(tracker.limit) !== null);
 
-const SWITCHES: readonly { key: SwitchKey; label: string; hint: string }[] = [
-  { key: "groupUnassignedByFolder", label: "Group unlabelled agents by folder", hint: "Otherwise they share one Unassigned group." },
-  { key: "showStopButton", label: "Show Stop on running agents", hint: "Two taps; runs paseo stop on the daemon." },
-  { key: "countSubagents", label: "Count sub-agents", hint: "Reads the recent timeline of running agents every 30 seconds." },
-  { key: "detachNewLeads", label: "Detach new leads", hint: "A lead created by another agent is detached at once, so its spawner stops being woken for it." },
-  { key: "adoptWorkers", label: "Hand workers to the new lead", hint: "On a handoff, the old lead's live workers are detached and assigned to the new lead." },
-  { key: "relayWorkerEvents", label: "Relay handed-over workers", hint: "Their finished, failed and permission events are sent to the lead that owns them now." },
-  { key: "labelInstruction", label: "Ask new agents to label themselves", hint: "Adds a line to every new agent's system prompt asking it to set role, group and task labels." },
-];
+
 
 function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps["theme"] }) {
   const [draft, setDraft] = useState(() => ({ values: settings.values, revision: settings.revision }));
   const [formKey, setFormKey] = useState(0);
+  const profiles = useAgentProfiles();
   const errorStyle = useMemo(() => ({ color: theme.colors.statusDanger }), [theme]);
   const change = useCallback(
     (key: TextKey) => (text: string) =>
@@ -82,10 +102,13 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
   );
   const trackersDirty = JSON.stringify(draft.values.trackers) !== JSON.stringify(settings.values.trackers);
   const dirty =
-    trackersDirty || PATTERNS.concat(LABELS).some(({ key }) => draft.values[key] !== settings.values[key]);
+    trackersDirty || TEXT_KEYS.some((key) => draft.values[key] !== settings.values[key]);
   const invalid =
-    PATTERNS.some(({ key }) => patternError(draft.values[key]) !== null) ||
+    PATTERN_KEYS.some((key) => patternError(draft.values[key]) !== null) ||
     daysError(draft.values.staleWorkspaceDays) !== null ||
+    hoursError(draft.values.autoArchiveIntervalHours) !== null ||
+    daysError(draft.values.autoArchiveAgentDays) !== null ||
+    daysError(draft.values.autoArchiveWorkspaceDays) !== null ||
     trackersError(draft.values.trackers);
   const setTrackers = useCallback(
     (update: (trackers: Tracker[]) => Tracker[]) =>
@@ -107,13 +130,21 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
     [setTrackers],
   );
 
+  const buildValues = useCallback(
+    (patch?: Partial<RosterSettings>): RosterSettings => {
+      const values: RosterSettings = { ...settings.values };
+      for (const key of TEXT_KEYS) values[key] = draft.values[key];
+      values.trackers = draft.values.trackers;
+      return patch ? { ...values, ...patch } : values;
+    },
+    [settings.values, draft.values],
+  );
+
   // Text fields go on top of the latest saved values, so a switch flipped mid-edit is kept.
   const save = useCallback(async () => {
-    const values = { ...settings.values };
-    for (const { key } of PATTERNS.concat(LABELS)) values[key] = draft.values[key];
-    values.trackers = draft.values.trackers;
+    const values = buildValues();
     if (await settings.save(values, settings.revision)) setDraft({ values, revision: settings.revision });
-  }, [settings, draft]);
+  }, [settings, buildValues]);
   const discard = useCallback(() => {
     setDraft({ values: settings.values, revision: settings.revision });
     setFormKey((key) => key + 1);
@@ -213,48 +244,352 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
           ) : null}
         </SettingsCard>
       </SettingsSection>
-      <SettingsSection title="Behaviour">
-        <SettingsCard>
-          {SWITCHES.map(({ key, label, hint }) => (
+      <SettingsSection title="Workflow presets">
+        {settings.values.brainstormPreset ? (
+          <SettingsCard key={`brainstorm-${formKey}`}>
+            <SettingsSelect
+              label="Default brainstorm profile"
+              hint="Profile used when spawning a brainstorm chat from the board."
+              value={settings.values.brainstormProfile}
+              options={[
+                { label: "Auto (Brainstorm profile)", value: "" },
+                ...profiles.map((p) => ({
+                  label: `${p.name} (${p.model ? `${p.provider}/${p.model}` : p.provider})`,
+                  value: p.id,
+                })),
+              ]}
+              disabled={settings.saving}
+              onValueChange={(value) => {
+                const values = buildValues({ brainstormProfile: value });
+                void settings.save(values, settings.revision);
+                setDraft((current) => ({ ...current, values: { ...current.values, brainstormProfile: value } }));
+              }}
+            />
+            <SettingsSelect
+              label="Default brainstorm mode"
+              hint="Resolves each provider's real auto mode ID (Claude: auto, Gemini: accept-edits)."
+              value={settings.values.brainstormModeId}
+              options={[
+                { label: "Auto mode (per provider)", value: "auto" },
+                { label: "Profile default", value: "profile" },
+                { label: "Plan mode", value: "plan" },
+                { label: "Always ask / Default", value: "default" },
+              ]}
+              disabled={settings.saving}
+              onValueChange={(value) => {
+                const values = buildValues({ brainstormModeId: value });
+                void settings.save(values, settings.revision);
+                setDraft((current) => ({ ...current, values: { ...current.values, brainstormModeId: value } }));
+              }}
+            />
             <SettingsSwitch
-              key={key}
-              label={label}
-              hint={hint}
-              value={settings.values[key]}
+              label="Ask brainstorm chats to name and label themselves"
+              hint="Adds the prompt line below to new agents so brainstorm chats title themselves and set their role label."
+              value={settings.values.brainstormPromptEnabled}
               disabled={settings.saving}
-              onValueChange={toggle(key)}
+              onValueChange={toggle("brainstormPromptEnabled")}
             />
-          ))}
+            <SettingsInput
+              label="Brainstorm prompt"
+              hint="System-prompt line added when the switch above is on."
+              initialValue={draft.values.brainstormPrompt}
+              onChangeText={change("brainstormPrompt")}
+              disabled={settings.saving}
+            />
+            <SettingsInput
+              label="Brainstorm title pattern"
+              hint="Pinned as Brainstorm when an agent has no role label."
+              initialValue={draft.values.brainstormTitlePattern}
+              onChangeText={change("brainstormTitlePattern")}
+              disabled={settings.saving}
+              error={patternError(draft.values.brainstormTitlePattern)}
+            />
+            <SettingsInput
+              label="Brainstorm roles"
+              hint="Comma-separated role label values for brainstorm chats."
+              initialValue={draft.values.brainstormRoles}
+              onChangeText={change("brainstormRoles")}
+              disabled={settings.saving}
+            />
+            <SettingsAction
+              label="Remove Brainstorm preset"
+              actionLabel="Remove"
+              disabled={settings.saving}
+              onPress={async () => {
+                const values = buildValues({
+                  brainstormPreset: false,
+                  trackers: draft.values.trackers.filter((t) => t.kind !== "brainstorm"),
+                });
+                if (await settings.save(values, settings.revision)) {
+                  setDraft({ values, revision: settings.revision });
+                  setFormKey((key) => key + 1);
+                }
+              }}
+            />
+          </SettingsCard>
+        ) : (
+          <SettingsCard>
+            <SettingsAction
+              label="Brainstorm preset removed (brainstorm matching and auto-naming are off)"
+              actionLabel="+ Add Brainstorm preset"
+              disabled={settings.saving}
+              onPress={async () => {
+                const values = buildValues({
+                  brainstormPreset: true,
+                  brainstormTitlePattern:
+                    draft.values.brainstormTitlePattern || DEFAULT_SETTINGS.brainstormTitlePattern,
+                  brainstormRoles: draft.values.brainstormRoles || DEFAULT_SETTINGS.brainstormRoles,
+                  brainstormPrompt: draft.values.brainstormPrompt || DEFAULT_BRAINSTORM_PROMPT,
+                  trackers: draft.values.trackers.some((t) => t.kind === "brainstorm")
+                    ? draft.values.trackers
+                    : [
+                        ...draft.values.trackers,
+                        { id: "brainstorm", name: "Brainstorm", kind: "brainstorm" as const, pattern: "", limit: "6" },
+                      ],
+                });
+                if (await settings.save(values, settings.revision)) {
+                  setDraft({ values, revision: settings.revision });
+                  setFormKey((key) => key + 1);
+                }
+              }}
+            />
+          </SettingsCard>
+        )}
+        {settings.values.leadsPreset ? (
+          <SettingsCard key={`leads-${formKey}`}>
+            <SettingsSwitch
+              label="Ask leads and workers to name and label themselves"
+              hint="Adds the lead and worker naming/labeling prompt line below to new agents."
+              value={settings.values.leadPromptEnabled}
+              disabled={settings.saving}
+              onValueChange={toggle("leadPromptEnabled")}
+            />
+            <SettingsInput
+              label="Lead & worker prompt"
+              hint="System-prompt line added when the switch above is on."
+              initialValue={draft.values.leadPrompt}
+              onChangeText={change("leadPrompt")}
+              disabled={settings.saving}
+            />
+            <SettingsSwitch
+              label="Tell new agents how to find a project's lead"
+              hint="Adds the lead-lookup prompt line below to every new agent."
+              value={settings.values.leadPointerEnabled}
+              disabled={settings.saving}
+              onValueChange={toggle("leadPointerEnabled")}
+            />
+            <SettingsInput
+              label="Lead lookup prompt"
+              hint="System-prompt line telling agents how to find a project's current lead."
+              initialValue={draft.values.leadPointerPrompt}
+              onChangeText={change("leadPointerPrompt")}
+              disabled={settings.saving}
+            />
+            <SettingsSwitch
+              label="Detach new leads"
+              hint="A lead created by another agent is detached at once, so its spawner stops being woken for it."
+              value={settings.values.detachNewLeads}
+              disabled={settings.saving}
+              onValueChange={toggle("detachNewLeads")}
+            />
+            <SettingsSwitch
+              label="Hand workers to the new lead"
+              hint="On a handoff, the old lead's live workers are detached and assigned to the new lead."
+              value={settings.values.adoptWorkers}
+              disabled={settings.saving}
+              onValueChange={toggle("adoptWorkers")}
+            />
+            <SettingsSwitch
+              label="Relay handed-over workers"
+              hint="Their finished, failed and permission events are sent to the lead that owns them now."
+              value={settings.values.relayWorkerEvents}
+              disabled={settings.saving}
+              onValueChange={toggle("relayWorkerEvents")}
+            />
+            <SettingsInput
+              label="Lead title pattern"
+              hint="Agents pinned in the sidebar when they have no role label."
+              initialValue={draft.values.leadTitlePattern}
+              onChangeText={change("leadTitlePattern")}
+              disabled={settings.saving}
+              error={patternError(draft.values.leadTitlePattern)}
+            />
+            <SettingsInput
+              label="Retired title pattern"
+              hint="Hidden unless Old leads is on."
+              initialValue={draft.values.hideTitlePattern}
+              onChangeText={change("hideTitlePattern")}
+              disabled={settings.saving}
+              error={patternError(draft.values.hideTitlePattern)}
+            />
+            <SettingsInput
+              label="Sidebar label strip"
+              hint="Removed from lead titles in the sidebar."
+              initialValue={draft.values.sidebarStripPattern}
+              onChangeText={change("sidebarStripPattern")}
+              disabled={settings.saving}
+              error={patternError(draft.values.sidebarStripPattern)}
+            />
+            <SettingsInput
+              label="Lead roles"
+              hint="Comma-separated role values for active leads."
+              initialValue={draft.values.leadRoles}
+              onChangeText={change("leadRoles")}
+              disabled={settings.saving}
+            />
+            <SettingsInput
+              label="Retired lead roles"
+              hint="Comma-separated role values hidden by default."
+              initialValue={draft.values.oldLeadRoles}
+              onChangeText={change("oldLeadRoles")}
+              disabled={settings.saving}
+            />
+            <SettingsAction
+              label="Remove Leads & handoffs preset"
+              actionLabel="Remove"
+              disabled={settings.saving}
+              onPress={async () => {
+                const values = buildValues({
+                  leadsPreset: false,
+                  trackers: draft.values.trackers.filter((t) => t.kind !== "leads"),
+                });
+                if (await settings.save(values, settings.revision)) {
+                  setDraft({ values, revision: settings.revision });
+                  setFormKey((key) => key + 1);
+                }
+              }}
+            />
+          </SettingsCard>
+        ) : (
+          <SettingsCard>
+            <SettingsAction
+              label="Leads & handoffs preset removed (lead matching, handoffs and lead prompts are off)"
+              actionLabel="+ Add Leads preset"
+              disabled={settings.saving}
+              onPress={async () => {
+                const values = buildValues({
+                  leadsPreset: true,
+                  leadTitlePattern: draft.values.leadTitlePattern || DEFAULT_SETTINGS.leadTitlePattern,
+                  hideTitlePattern: draft.values.hideTitlePattern || DEFAULT_SETTINGS.hideTitlePattern,
+                  sidebarStripPattern: draft.values.sidebarStripPattern || DEFAULT_SETTINGS.sidebarStripPattern,
+                  leadRoles: draft.values.leadRoles || DEFAULT_SETTINGS.leadRoles,
+                  oldLeadRoles: draft.values.oldLeadRoles || DEFAULT_SETTINGS.oldLeadRoles,
+                  leadPrompt: draft.values.leadPrompt || DEFAULT_LEAD_PROMPT,
+                  leadPointerPrompt: draft.values.leadPointerPrompt || DEFAULT_LEAD_POINTER,
+                  trackers: draft.values.trackers.some((t) => t.kind === "leads")
+                    ? draft.values.trackers
+                    : [
+                        { id: "leads", name: "Leads", kind: "leads" as const, pattern: "", limit: "6" },
+                        ...draft.values.trackers,
+                      ],
+                });
+                if (await settings.save(values, settings.revision)) {
+                  setDraft({ values, revision: settings.revision });
+                  setFormKey((key) => key + 1);
+                }
+              }}
+            />
+          </SettingsCard>
+        )}
+      </SettingsSection>
+      <SettingsSection title="Board & workspaces">
+        <SettingsCard key={`general-${formKey}`}>
+          <SettingsSwitch
+            label="Group unlabelled agents by folder"
+            hint="Otherwise they share one Unassigned group."
+            value={settings.values.groupUnassignedByFolder}
+            disabled={settings.saving}
+            onValueChange={toggle("groupUnassignedByFolder")}
+          />
+          <SettingsSwitch
+            label="Show Stop on running agents"
+            hint="Two taps; runs paseo stop on the daemon."
+            value={settings.values.showStopButton}
+            disabled={settings.saving}
+            onValueChange={toggle("showStopButton")}
+          />
+          <SettingsSwitch
+            label="Count sub-agents"
+            hint="Reads the recent timeline of running agents every 30 seconds."
+            value={settings.values.countSubagents}
+            disabled={settings.saving}
+            onValueChange={toggle("countSubagents")}
+          />
+          <SettingsInput
+            label="Role label key"
+            hint="Label whose value says lead, worker, and so on."
+            initialValue={draft.values.roleLabel}
+            onChangeText={change("roleLabel")}
+            disabled={settings.saving}
+          />
+          <SettingsInput
+            label="Group label key"
+            hint="Agents sharing this label's value are grouped together."
+            initialValue={draft.values.leadLabel}
+            onChangeText={change("leadLabel")}
+            disabled={settings.saving}
+          />
+          <SettingsInput
+            label="Task label key"
+            hint="Shown as a chip on each row."
+            initialValue={draft.values.taskLabel}
+            onChangeText={change("taskLabel")}
+            disabled={settings.saving}
+          />
+          <SettingsInput
+            label="Stale workspace days"
+            hint="Workspaces idle this long can be cleaned up."
+            initialValue={draft.values.staleWorkspaceDays}
+            onChangeText={change("staleWorkspaceDays")}
+            disabled={settings.saving}
+            error={daysError(draft.values.staleWorkspaceDays)}
+          />
         </SettingsCard>
       </SettingsSection>
-      <SettingsSection title="Title patterns (regular expressions, case-insensitive)">
-        <SettingsCard key={`p${formKey}`}>
-          {PATTERNS.map(({ key, label, hint }) => (
-            <SettingsInput
-              key={key}
-              label={label}
-              hint={hint}
-              initialValue={draft.values[key]}
-              onChangeText={change(key)}
-              disabled={settings.saving}
-              error={patternError(draft.values[key])}
-            />
-          ))}
-        </SettingsCard>
-      </SettingsSection>
-      <SettingsSection title="Labels (preferred over titles)">
-        <SettingsCard key={`l${formKey}`}>
-          {LABELS.map(({ key, label, hint }) => (
-            <SettingsInput
-              key={key}
-              label={label}
-              hint={hint}
-              initialValue={draft.values[key]}
-              onChangeText={change(key)}
-              disabled={settings.saving}
-              error={key === "staleWorkspaceDays" ? daysError(draft.values[key]) : null}
-            />
-          ))}
+      <SettingsSection title="Auto-archive">
+        <SettingsCard key={`auto-archive-${formKey}`}>
+          <SettingsSwitch
+            label="Auto-archive idle agents"
+            hint="Never touches leads, running agents, or brainstorms whose lead is still alive."
+            value={settings.values.autoArchiveAgents}
+            disabled={settings.saving}
+            onValueChange={toggle("autoArchiveAgents")}
+          />
+          <SettingsSwitch
+            label="Auto-archive safe workspaces (opt-in)"
+            hint="Only clean, merged, agent-free worktrees Paseo created. Deletes the folder."
+            value={settings.values.autoArchiveWorkspaces}
+            disabled={settings.saving}
+            onValueChange={toggle("autoArchiveWorkspaces")}
+          />
+          <SettingsSwitch
+            label="Dry run: show what would be archived"
+            hint="Logs matches on the Workspaces screen without archiving anything."
+            value={settings.values.autoArchiveDryRun}
+            disabled={settings.saving}
+            onValueChange={toggle("autoArchiveDryRun")}
+          />
+          <SettingsInput
+            label="Check interval (hours)"
+            initialValue={draft.values.autoArchiveIntervalHours}
+            onChangeText={change("autoArchiveIntervalHours")}
+            disabled={settings.saving}
+            error={hoursError(draft.values.autoArchiveIntervalHours)}
+          />
+          <SettingsInput
+            label="Idle agent threshold (days)"
+            initialValue={draft.values.autoArchiveAgentDays}
+            onChangeText={change("autoArchiveAgentDays")}
+            disabled={settings.saving}
+            error={daysError(draft.values.autoArchiveAgentDays)}
+          />
+          <SettingsInput
+            label="Idle workspace threshold (days)"
+            initialValue={draft.values.autoArchiveWorkspaceDays}
+            onChangeText={change("autoArchiveWorkspaceDays")}
+            disabled={settings.saving}
+            error={daysError(draft.values.autoArchiveWorkspaceDays)}
+          />
         </SettingsCard>
       </SettingsSection>
       <SettingsSection title="Save">

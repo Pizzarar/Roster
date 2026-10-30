@@ -8,6 +8,13 @@ import { z } from "zod";
 export const TRACKER_KINDS = ["leads", "brainstorm", "title", "folder", "label"] as const;
 export type TrackerKind = (typeof TRACKER_KINDS)[number];
 
+export const DEFAULT_BRAINSTORM_PROMPT =
+  "Roster: if this is a brainstorm chat, set your title to `BRAINSTORM · <topic>` and label `role=brainstorm` with Paseo's update_agent tool (or `paseo agent update <PASEO_AGENT_ID> --name ... --label ...` if the MCP tool is unavailable).";
+export const DEFAULT_LEAD_PROMPT =
+  "Roster: if you are a project lead, set your title to `★ LEAD · <project>` and labels `role=lead,lead=<project>` with Paseo's update_agent tool (or `paseo agent update <PASEO_AGENT_ID> --name ... --label ...`); if you are a worker, set labels `role=worker,lead=<project>,task=<short task name>`. Pass `lead=<project>` on to agents you spawn.";
+export const DEFAULT_LEAD_POINTER =
+  "To find a project's current lead: run `paseo ls -g --json` and pick the agent whose cwd matches the project and whose name starts with ★ LEAD (never one starting with (old)).";
+
 export const trackerSchema = z.object({
   id: z.string(),
   name: z.string().default(""),
@@ -36,7 +43,7 @@ export const rosterSettings = defineSettings({
   schema: z.object({
     leadTitlePattern: z.string().default("^★ LEAD"),
     hideTitlePattern: z.string().default("^\\(old\\)"),
-    brainstormTitlePattern: z.string().default("^BRAINSTORM\\b"),
+    brainstormTitlePattern: z.string().default("\\bbrainstorm"),
     sidebarStripPattern: z.string().default("^★ LEAD · |\\s*\\(talk here:.*\\)\\s*$"),
     roleLabel: z.string().trim().default("role"),
     leadLabel: z.string().trim().default("lead"),
@@ -59,6 +66,26 @@ export const rosterSettings = defineSettings({
     trackers: z.array(trackerSchema).default(() => DEFAULT_TRACKERS.map((tracker) => ({ ...tracker }))),
     /** Workspaces idle this many days are cleanup candidates. */
     staleWorkspaceDays: z.string().trim().default("3"),
+    /** Archive agents idle this many days (never leads, running agents, or brainstorms with a live lead). */
+    autoArchiveAgents: z.boolean().default(true),
+    /** Archive clean, merged, agent-free Paseo worktrees idle this many days. */
+    autoArchiveWorkspaces: z.boolean().default(false),
+    autoArchiveDryRun: z.boolean().default(false),
+    autoArchiveIntervalHours: z.string().trim().default("6"),
+    autoArchiveAgentDays: z.string().trim().default("3"),
+    autoArchiveWorkspaceDays: z.string().trim().default("3"),
+    brainstormPreset: z.boolean().default(true),
+    /** Profile id or name for new brainstorms; empty picks the first "brainstorm" profile. */
+    brainstormProfile: z.string().default(""),
+    /** Mode for new brainstorms: `auto` (per provider), `profile`, or a literal mode id. */
+    brainstormModeId: z.string().default("auto"),
+    brainstormPromptEnabled: z.boolean().default(true),
+    brainstormPrompt: z.string().default(DEFAULT_BRAINSTORM_PROMPT),
+    leadsPreset: z.boolean().default(true),
+    leadPromptEnabled: z.boolean().default(false),
+    leadPrompt: z.string().default(DEFAULT_LEAD_PROMPT),
+    leadPointerEnabled: z.boolean().default(true),
+    leadPointerPrompt: z.string().default(DEFAULT_LEAD_POINTER),
   }),
 });
 

@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { TrackerConfig } from "../shared/config";
 import { useBoardConfig } from "./config";
-import { compareAgents, isTracked, sidebarTitle, type BoardAgent } from "./model";
+import { agentKind, analyzeBrainstormCoverage, compareAgents, isTracked, sidebarTitle, type BoardAgent } from "./model";
 import { BOARD_SCREEN, OPEN_AGENT_SCREEN, WORKSPACES_SCREEN, navigationOf } from "./navigation";
 import { useBoard, useSubagentWatch } from "./store";
 import { attentionLabel, Chip, dotIcon, statusColor, subagentLabel } from "./ui";
@@ -22,21 +22,36 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
   const board = useBoard();
   const cfg = useBoardConfig();
   const [collapsed, setCollapsed] = useState(() => new Set(collapsedSections));
-  const { sections, running } = useMemo(() => {
+  const { sections, leads, running } = useMemo(() => {
     const agents = [...board.agents.values()].sort(compareAgents);
     return {
-      sections: cfg.trackers.map(
+      leads: cfg.leadsPreset ? agents.filter((agent) => agentKind(agent, cfg) === "lead") : [],
+      sections: cfg.trackers
+        .filter((tracker) => !(cfg.leadsPreset && tracker.kind === "leads"))
+        .map(
         (tracker): Section => ({ tracker, agents: agents.filter((agent) => isTracked(agent, tracker, cfg)) }),
-      ),
+        ),
       running: agents.filter((agent) => agent.status === "running").length,
     };
   }, [board.agents, cfg]);
+  const coverage = useMemo(
+    () =>
+      cfg.brainstormPreset
+        ? analyzeBrainstormCoverage([...board.agents.values()], cfg)
+        : { candidates: [], missingLeads: [] },
+    [board.agents, cfg],
+  );
   const watched = useMemo(
     () =>
       cfg.countSubagents
-        ? [...new Set(sections.flatMap(({ tracker, agents }) => agents.slice(0, tracker.limit).map((agent) => agent.id)))]
+        ? [
+            ...new Set([
+              ...leads.map((agent) => agent.id),
+              ...sections.flatMap(({ tracker, agents }) => agents.slice(0, tracker.limit).map((agent) => agent.id)),
+            ]),
+          ]
         : [],
-    [sections, cfg],
+    [sections, leads, cfg],
   );
   useSubagentWatch(watched);
 
@@ -157,6 +172,20 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
             ) : null}
           </>
         )}
+        {!shut && tracker.kind === "brainstorm" && (coverage.candidates.length > 0 || coverage.missingLeads.length > 0) ? (
+          <SidebarRow
+            id="brainstorm-coverage"
+            icon="LayoutList"
+            label={
+              coverage.missingLeads.length > 0 && coverage.candidates.length > 0
+                ? `${coverage.missingLeads.length} missing · ${coverage.candidates.length} to rename`
+                : coverage.missingLeads.length > 0
+                  ? `${coverage.missingLeads.length} active without brainstorm`
+                  : `${coverage.candidates.length} to rename`
+            }
+            onPress={openBoard}
+          />
+        ) : null}
       </View>
     );
   };
@@ -183,6 +212,19 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
           tone={board.status === "error" ? "danger" : running > 0 ? "accent" : "muted"}
         />
       </Pressable>
+      {cfg.leadsPreset ? (
+        <>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle} numberOfLines={1}>
+              Leads
+            </Text>
+            {leads.some((agent) => agent.requiresAttention) ? <Chip theme={theme} label="!" tone="warning" /> : null}
+            <Text style={styles.muted}>{leads.length}</Text>
+          </View>
+          {leads.length === 0 ? <Text style={styles.empty}>None active</Text> : leads.map((agent) => row(agent, "pinned-leads"))}
+          <View style={styles.divider} />
+        </>
+      ) : null}
       {sections.map(section)}
       <View style={styles.divider} />
       <SidebarRow

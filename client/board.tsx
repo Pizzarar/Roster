@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import {
   agentKind,
+  analyzeBrainstormCoverage,
   basename,
   chainedLeads,
   displayTitle,
@@ -12,12 +13,14 @@ import {
   matchesSearch,
   relativeTime,
   type BoardAgent,
+  type BrainstormCoverage,
   type LiveWorktree,
 } from "./model";
 import { boardStore, useBoard, useNow, useSubagentWatch, type SubagentCount } from "./store";
 import { PARENT_LABEL, type BoardConfig } from "../shared/config";
 import { stopAgentRpc } from "../shared/stop";
 import { fixChainedLeadsRpc, type HandoffRecord } from "../shared/handoff";
+import { createBrainstormRpc, renameBrainstormRpc } from "../shared/brainstorm";
 import { useBoardConfig } from "./config";
 import { attentionLabel, Chip, ConfirmButton, StatusDot, statusColor, subagentLabel } from "./ui";
 
@@ -78,6 +81,32 @@ export function makeStyles(theme: Theme, compact: boolean) {
   };
 }
 export type Styles = ReturnType<typeof makeStyles>;
+
+export type AgentProfile = NonNullable<
+  Awaited<ReturnType<ReturnType<typeof usePaseo>["config"]["get"]>>["config"]["agentProfiles"]
+>[number];
+
+/** Daemon agent profiles, Brainstorm ones first. */
+export function useAgentProfiles(): AgentProfile[] {
+  const paseo = usePaseo();
+  const [profiles, setProfiles] = useState<AgentProfile[]>([]);
+  useEffect(() => {
+    let live = true;
+    void paseo.config
+      .get()
+      .then((res) => {
+        const config = res.config as typeof res.config & { daemon?: { agentProfiles?: AgentProfile[] } };
+        const all = config.agentProfiles ?? config.daemon?.agentProfiles ?? [];
+        const isBrainstorm = (p: AgentProfile) => /brainstorm/i.test(p.name);
+        if (live) setProfiles([...all].sort((a, b) => Number(isBrainstorm(b)) - Number(isBrainstorm(a))));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [paseo]);
+  return profiles;
+}
 
 export function Toggle({
   theme,
@@ -248,6 +277,109 @@ function WorktreeRow({
 }
 
 /** Leads still chained to their spawner, and recent handoffs with their retired lead. */
+function BrainstormCoverageSection({
+  coverage,
+  theme,
+  styles,
+  onRename,
+  onCreate,
+  profiles,
+}: {
+  coverage: BrainstormCoverage;
+  theme: Theme;
+  styles: Styles;
+  onRename: (candidate: BrainstormCoverage["candidates"][number]) => Promise<unknown>;
+  onCreate: (missing: BrainstormCoverage["missingLeads"][number], profileId?: string) => Promise<unknown>;
+  profiles: readonly AgentProfile[];
+}) {
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  return (
+    <>
+      <Text style={styles.section}>BRAINSTORM COVERAGE</Text>
+      <View style={styles.group}>
+        {coverage.candidates.map((item, index) => (
+          <View key={item.agent.id}>
+            {index > 0 ? <View style={styles.divider} /> : null}
+            <View style={styles.row}>
+              <View style={styles.rowBody}>
+                <Text style={styles.text} numberOfLines={1}>
+                  {displayTitle(item.agent)} → {item.suggestedTitle}
+                </Text>
+                <Text style={styles.muted} numberOfLines={1}>
+                  Rename and set role=brainstorm so it shows up in the sidebar
+                </Text>
+              </View>
+              <ConfirmButton
+                theme={theme}
+                label="Rename"
+                armedLabel="Confirm?"
+                busyLabel="Renaming…"
+                tone="accent"
+                accessibilityLabel={`Rename ${displayTitle(item.agent)} to ${item.suggestedTitle}`}
+                onConfirm={() => onRename(item)}
+              />
+            </View>
+          </View>
+        ))}
+        {coverage.missingLeads.map((item, index) => (
+          <View key={item.lead.id}>
+            {index > 0 || coverage.candidates.length > 0 ? <View style={styles.divider} /> : null}
+            <View style={styles.row}>
+              <View style={styles.rowBody}>
+                <Text style={styles.text} numberOfLines={1}>
+                  {item.area} has no brainstorm chat
+                </Text>
+                <Text style={styles.muted} numberOfLines={1}>
+                  {displayTitle(item.lead)} · {basename(item.lead.cwd)}
+                </Text>
+              </View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <ConfirmButton
+                  theme={theme}
+                  label="Create brainstorm"
+                  armedLabel="Spawn chat?"
+                  busyLabel="Creating…"
+                  tone="accent"
+                  accessibilityLabel={`Create brainstorm chat for ${item.area}`}
+                  onConfirm={() => onCreate(item)}
+                />
+                {profiles.length > 0 ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Choose profile for ${item.area} brainstorm`}
+                    onPress={() => setMenuFor(menuFor === item.lead.id ? null : item.lead.id)}
+                    style={[styles.smallButton, { borderColor: theme.colors.accent }]}
+                  >
+                    <Text style={{ color: theme.colors.accent, fontSize: 12 }}>▾</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+            {menuFor === item.lead.id ? (
+              <View style={[styles.row, { flexWrap: "wrap", paddingTop: 0 }]}>
+                {profiles.map((profile) => (
+                  <Pressable
+                    key={profile.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Spawn ${item.area} brainstorm with ${profile.name}`}
+                    onPress={() => {
+                      setMenuFor(null);
+                      void onCreate(item, profile.id);
+                    }}
+                    style={styles.smallButton}
+                  >
+                    <Text style={styles.text}>{profile.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        ))}
+      </View>
+    </>
+  );
+}
+
 function HandoffSection({
   chained,
   handoffs,
@@ -360,6 +492,9 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
   const paseo = usePaseo();
   const stopRpc = useRpc(stopAgentRpc);
   const fixChainsRpc = useRpc(fixChainedLeadsRpc);
+  const renameRpc = useRpc(renameBrainstormRpc);
+  const createRpc = useRpc(createBrainstormRpc);
+  const profiles = useAgentProfiles();
   const [query, setQuery] = useState("");
   const [showOld, setShowOld] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -385,6 +520,7 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
   const relays = board.handoffs.relays;
   const groups = useMemo(() => groupAgents(all, visible, cfg, relays), [all, visible, cfg, relays]);
   const chained = useMemo(() => chainedLeads(live, cfg), [live, cfg]);
+  const coverage = useMemo(() => analyzeBrainstormCoverage(live, cfg), [live, cfg]);
   const worktrees = useMemo(() => liveWorktrees(live), [live]);
   useSubagentWatch(
     useMemo(
@@ -433,6 +569,38 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
       toast.error(`Archive failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
+  const renameCandidate = async (candidate: BrainstormCoverage["candidates"][number]) => {
+    try {
+      const res = await renameRpc({
+        agentId: candidate.agent.id,
+        title: candidate.suggestedTitle,
+        leadKey: candidate.leadKey,
+      });
+      if (res.ok) toast.show(res.message);
+      else toast.error(res.message);
+    } catch (error) {
+      toast.error(`Rename failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const createBrainstorm = async (missing: BrainstormCoverage["missingLeads"][number], profileId?: string) => {
+    try {
+      const res = await createRpc({
+        leadId: missing.lead.id,
+        leadTitle: displayTitle(missing.lead),
+        area: missing.area,
+        cwd: missing.lead.cwd,
+        profile: profileId || cfg.brainstormProfile || undefined,
+        modeId: cfg.brainstormModeId || "auto",
+      });
+      if (res.ok) toast.show(res.message);
+      else toast.error(res.message);
+      if (res.agentId && navigation) {
+        navigation.openAgent({ agentId: res.agentId });
+      }
+    } catch (error) {
+      toast.error(`Create failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   const openWorktree = (worktree: LiveWorktree) => {
     if (navigation && worktree.workspaceId) navigation.openWorkspace({ workspaceId: worktree.workspaceId });
     else copy(worktree.cwd, "Path");
@@ -468,7 +636,7 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
         accessibilityLabel="Search agents"
       />
       <View style={styles.toggles}>
-        <Toggle theme={theme} label="Old leads" value={showOld} onChange={setShowOld} />
+        {cfg.leadsPreset ? <Toggle theme={theme} label="Old leads" value={showOld} onChange={setShowOld} /> : null}
         <Toggle theme={theme} label="Archived" value={showArchived} onChange={setShowArchived} />
         <Toggle
           theme={theme}
@@ -484,7 +652,7 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
         <Text style={styles.muted}>Could not load archived agents.</Text>
       ) : null}
 
-      <Text style={styles.section}>AGENTS BY LEAD</Text>
+      <Text style={styles.section}>{cfg.leadsPreset ? "AGENTS BY LEAD" : "AGENTS"}</Text>
       {groups.length === 0 && board.status === "ready" ? (
         <Text style={styles.muted}>No agents match.</Text>
       ) : null}
@@ -520,18 +688,31 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
         );
       })}
 
-      <HandoffSection
-        chained={chained}
-        handoffs={board.handoffs.handoffs}
-        agents={board.agents}
-        cfg={cfg}
-        now={now}
-        theme={theme}
-        styles={styles}
-        onOpen={openAgent}
-        onFix={fixChains}
-        onArchive={archiveAgent}
-      />
+      {cfg.brainstormPreset && (coverage.candidates.length > 0 || coverage.missingLeads.length > 0) ? (
+        <BrainstormCoverageSection
+          coverage={coverage}
+          theme={theme}
+          styles={styles}
+          onRename={renameCandidate}
+          onCreate={createBrainstorm}
+          profiles={profiles}
+        />
+      ) : null}
+
+      {cfg.leadsPreset ? (
+        <HandoffSection
+          chained={chained}
+          handoffs={board.handoffs.handoffs}
+          agents={board.agents}
+          cfg={cfg}
+          now={now}
+          theme={theme}
+          styles={styles}
+          onOpen={openAgent}
+          onFix={fixChains}
+          onArchive={archiveAgent}
+        />
+      ) : null}
 
       <Text style={styles.section}>WORKTREES WITH LIVE AGENTS ({worktrees.length})</Text>
       <View style={styles.group}>
