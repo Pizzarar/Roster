@@ -1,4 +1,4 @@
-import { rosterSettings, type RosterSettings } from "./settings";
+import { rosterSettings, type RosterSettings, type Tracker, type TrackerKind } from "./settings";
 
 /** Sub-agent counting: poll the timeline tail of running agents while visible. */
 export const SUBAGENT_POLL_MS = 30_000;
@@ -10,6 +10,20 @@ export const AGENT_PAGE_LIMIT = 200;
 
 /** Spawner label written by Paseo itself; not configurable. */
 export const PARENT_LABEL = "paseo.parent-agent-id";
+
+/** A sidebar section, ready to match agents. */
+export interface TrackerConfig {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: TrackerKind;
+  /** `title`: the compiled pattern. */
+  readonly title: RegExp | null;
+  /** `folder`: lower-case path fragment with forward slashes. */
+  readonly folder: string;
+  /** `label`: key and value. */
+  readonly label: readonly [string, string] | null;
+  readonly limit: number;
+}
 
 export interface BoardConfig {
   readonly leadTitle: RegExp | null;
@@ -26,6 +40,8 @@ export interface BoardConfig {
   readonly detachNewLeads: boolean;
   readonly adoptWorkers: boolean;
   readonly relayWorkerEvents: boolean;
+  readonly labelInstruction: boolean;
+  readonly trackers: readonly TrackerConfig[];
   /** Milliseconds of inactivity before a workspace is a cleanup candidate. */
   readonly staleWorkspaceMs: number;
 }
@@ -60,6 +76,63 @@ const DAY_MS = 86_400_000;
 export function daysError(value: string): string | null {
   const days = Number(value);
   return Number.isFinite(days) && days >= 0 ? null : "Enter a number of days, 0 or more";
+}
+
+const KIND_NAMES: Record<TrackerKind, string> = {
+  leads: "Leads",
+  brainstorm: "Brainstorm",
+  title: "Title match",
+  folder: "Folder",
+  label: "Label",
+};
+
+export function trackerName(tracker: Pick<Tracker, "name" | "kind" | "pattern">): string {
+  return tracker.name.trim() || (tracker.kind === "folder" && tracker.pattern.trim()) || KIND_NAMES[tracker.kind];
+}
+
+/** Lower-case, forward slashes, no trailing slash: for folder matching. */
+export function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+function parseLabel(pattern: string): [string, string] | null {
+  const at = pattern.indexOf("=");
+  if (at <= 0) return null;
+  return [pattern.slice(0, at).trim(), pattern.slice(at + 1).trim()];
+}
+
+/** Why a sidebar section can't match anything, or null. */
+export function trackerError(tracker: Pick<Tracker, "kind" | "pattern">): string | null {
+  const pattern = tracker.pattern.trim();
+  switch (tracker.kind) {
+    case "title":
+      return pattern ? patternError(pattern) : "Enter a pattern";
+    case "folder":
+      return pattern ? null : "Enter part of a folder path";
+    case "label":
+      return parseLabel(pattern) ? null : "Enter key=value";
+    default:
+      return null;
+  }
+}
+
+/** Why a row limit is unusable, or null. */
+export function limitError(value: string): string | null {
+  const limit = Number(value);
+  return Number.isInteger(limit) && limit >= 1 && limit <= 50 ? null : "Enter a whole number from 1 to 50";
+}
+
+function compileTracker(tracker: Tracker): TrackerConfig {
+  const pattern = tracker.pattern.trim();
+  return {
+    id: tracker.id,
+    name: trackerName(tracker),
+    kind: tracker.kind,
+    title: tracker.kind === "title" ? compile(pattern, "i") : null,
+    folder: tracker.kind === "folder" ? normalizePath(pattern) : "",
+    label: tracker.kind === "label" ? parseLabel(pattern) : null,
+    limit: limitError(tracker.limit) ? 6 : Number(tracker.limit),
+  };
 }
 
 function staleDays(value: string): number {
@@ -103,6 +176,8 @@ export function compileConfig(values: RosterSettings): BoardConfig {
     detachNewLeads: values.detachNewLeads,
     adoptWorkers: values.adoptWorkers,
     relayWorkerEvents: values.relayWorkerEvents,
+    labelInstruction: values.labelInstruction,
+    trackers: values.trackers.map(compileTracker),
     staleWorkspaceMs: staleDays(values.staleWorkspaceDays) * DAY_MS,
   };
 }

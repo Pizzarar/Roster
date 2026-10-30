@@ -1,4 +1,4 @@
-Roster pins your active leads and brainstorm chat above Workspaces in the sidebar, and adds a Roster screen that lists every agent on the daemon grouped by lead.
+Roster pins the agents you track in a boxed panel above Workspaces in the sidebar, and adds a Roster screen that lists every agent on the daemon grouped by lead.
 
 Leads are found by the `role=lead` label, or a title starting with `★ LEAD`. Titles starting with `(old)` are hidden unless "Old leads" is on. Workers are grouped by their `lead` label, falling back to the `paseo.parent-agent-id` chain.
 
@@ -9,5 +9,9 @@ A running agent can be interrupted with Stop (tap twice). This runs `paseo stop`
 Lead handoffs: a new lead spawned by another agent is detached from it at once. If the spawner was a lead, its live workers move to the new lead, and their finished, failed and permission events are relayed to whichever lead owns them now. The board shows leads that are still sub-agents (with a Fix) and recent handoffs (with Archive old lead). Every new agent also gets one system-prompt line on how to find a project's current lead.
 
 The Workspaces screen lists every workspace with sorting, grouping by project, cleanup filters and git/PR chips. Safe workspaces can be archived one at a time or in bulk; archiving a Paseo worktree deletes its folder.
+
+The sidebar panel has one collapsible section per tracker. Leads and Brainstorm are there by default; in settings you can add sections that track agents by folder, title pattern or label, remove or reorder them, and cap how many rows each shows.
+
+An optional setting adds a line to every new agent's system prompt asking it to label itself with its role, group and task.
 
 Settings live under Settings → Plugins → Roster.
