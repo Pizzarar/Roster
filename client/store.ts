@@ -6,9 +6,20 @@ import {
   SUBAGENT_POLL_MS,
   SUBAGENT_TIMELINE_TAIL,
 } from "../shared/config";
+import { handoffStateRpc, type HandoffRecord } from "../shared/handoff";
 import type { BoardAgent } from "./model";
 
 type PaseoApi = PluginClientContext["paseo"];
+type Rpc = PluginClientContext["rpc"];
+
+const HANDOFF_POLL_MS = 20_000;
+
+export interface HandoffState {
+  /** Moved worker id -> the lead that now hears about it. */
+  readonly relays: Readonly<Record<string, string>>;
+  /** Newest first. */
+  readonly handoffs: readonly HandoffRecord[];
+}
 
 export interface SubagentCount {
   readonly running: number;
@@ -27,6 +38,7 @@ export interface BoardState {
   readonly archived: readonly BoardAgent[] | null;
   readonly archivedStatus: "idle" | "loading" | "ready" | "error";
   readonly subagents: ReadonlyMap<string, SubagentCount>;
+  readonly handoffs: HandoffState;
 }
 
 const INITIAL: BoardState = {
@@ -38,6 +50,7 @@ const INITIAL: BoardState = {
   archived: null,
   archivedStatus: "idle",
   subagents: new Map(),
+  handoffs: { relays: {}, handoffs: [] },
 };
 
 function message(error: unknown): string {
@@ -52,6 +65,8 @@ class AgentBoardStore {
   private state: BoardState = INITIAL;
   private readonly listeners = new Set<() => void>();
   private paseo: PaseoApi | null = null;
+  private rpc: Rpc | null = null;
+  private handoffTimer: ReturnType<typeof setInterval> | null = null;
   private lifetime: AbortController | null = null;
   private release: (() => Promise<void>) | null = null;
   private generation = 0;
@@ -75,9 +90,25 @@ class AgentBoardStore {
     for (const listener of this.listeners) listener();
   }
 
-  start(paseo: PaseoApi) {
+  start(paseo: PaseoApi, rpc: Rpc) {
     this.paseo = paseo;
+    this.rpc = rpc;
     void this.open();
+    void this.refreshHandoffs();
+    this.handoffTimer = setInterval(() => void this.refreshHandoffs(), HANDOFF_POLL_MS);
+  }
+
+  /** Re-read what the daemon side has rerouted. Cheap; it reads plugin memory. */
+  async refreshHandoffs() {
+    const rpc = this.rpc;
+    if (!rpc) return;
+    const generation = this.generation;
+    try {
+      const handoffs = await rpc(handoffStateRpc, {});
+      if (generation === this.generation) this.set({ handoffs });
+    } catch {
+      // The server side may be reloading; keep the last state.
+    }
   }
 
   async stop() {
@@ -86,6 +117,9 @@ class AgentBoardStore {
     this.lifetime = null;
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = null;
+    if (this.handoffTimer) clearInterval(this.handoffTimer);
+    this.handoffTimer = null;
+    this.rpc = null;
     this.watches.clear();
     const release = this.release;
     this.release = null;

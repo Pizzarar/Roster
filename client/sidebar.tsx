@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { View } from "react-native";
 import { useBoardConfig } from "./config";
 import { agentKind, compareAgents, sidebarTitle, type BoardAgent } from "./model";
-import { BOARD_SCREEN, OPEN_AGENT_SCREEN, navigationOf } from "./navigation";
+import { BOARD_SCREEN, OPEN_AGENT_SCREEN, WORKSPACES_SCREEN, navigationOf } from "./navigation";
 import { useBoard, useSubagentWatch } from "./store";
 import { attentionLabel, Chip, dotIcon, statusColor, subagentLabel } from "./ui";
 
@@ -73,6 +73,13 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
         label={allLabel}
         active={currentScreen?.screenId === BOARD_SCREEN}
         onPress={() => openScreen({ screenId: BOARD_SCREEN })}
+      />
+      <SidebarRow
+        id="workspaces"
+        icon="FolderTree"
+        label="Workspaces"
+        active={currentScreen?.screenId === WORKSPACES_SCREEN}
+        onPress={() => openScreen({ screenId: WORKSPACES_SCREEN })}
       />
     </>
   );

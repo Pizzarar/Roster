@@ -1,6 +1,6 @@
 import type { PluginHostProps, PluginIconProps } from "@getpaseo/plugin/client";
-import type { ComponentType } from "react";
-import { Text, View } from "react-native";
+import { useEffect, useState, type ComponentType } from "react";
+import { Pressable, Text, View } from "react-native";
 import type { AgentStatus, BoardAgent } from "./model";
 import type { SubagentCount } from "./store";
 
@@ -91,4 +91,63 @@ export function Chip({
 export function subagentLabel(count: SubagentCount | undefined): string | null {
   if (!count || count.running === 0) return null;
   return `${count.running} sub-agent${count.running === 1 ? "" : "s"}`;
+}
+
+/**
+ * Two taps: the first arms it for a few seconds, the second runs `onConfirm`.
+ * `tone` "danger" for destructive actions.
+ */
+export function ConfirmButton({
+  theme,
+  label,
+  armedLabel,
+  busyLabel,
+  accessibilityLabel,
+  tone = "danger",
+  disabled = false,
+  onConfirm,
+}: {
+  theme: Theme;
+  label: string;
+  armedLabel: string;
+  busyLabel: string;
+  accessibilityLabel: string;
+  tone?: "danger" | "accent";
+  disabled?: boolean;
+  onConfirm(): Promise<unknown>;
+}) {
+  const [state, setState] = useState<"idle" | "armed" | "busy">("idle");
+  useEffect(() => {
+    if (state !== "armed") return undefined;
+    const timer = setTimeout(() => setState("idle"), 4000);
+    return () => clearTimeout(timer);
+  }, [state]);
+  const color = disabled ? theme.colors.foregroundMuted : tone === "danger" ? theme.colors.statusDanger : theme.colors.accent;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={state === "armed" ? `Confirm: ${accessibilityLabel}` : accessibilityLabel}
+      accessibilityState={{ disabled: disabled || state === "busy" }}
+      disabled={disabled || state === "busy"}
+      onPress={() => {
+        if (state === "idle") setState("armed");
+        else if (state === "armed") {
+          setState("busy");
+          void onConfirm().finally(() => setState("idle"));
+        }
+      }}
+      style={{
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: color,
+        backgroundColor: state === "armed" ? color : "transparent",
+      }}
+    >
+      <Text style={{ fontSize: 12, color: state === "armed" ? theme.colors.surface0 : color }}>
+        {state === "armed" ? armedLabel : state === "busy" ? busyLabel : label}
+      </Text>
+    </Pressable>
+  );
 }

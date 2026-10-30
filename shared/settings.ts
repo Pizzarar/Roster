@@ -24,6 +24,14 @@ export const rosterSettings = defineSettings({
     groupUnassignedByFolder: z.boolean().default(true),
     showStopButton: z.boolean().default(true),
     countSubagents: z.boolean().default(true),
+    /** Detach a new lead from the agent that spawned it. */
+    detachNewLeads: z.boolean().default(true),
+    /** On a handoff, move the old lead's live workers under the new lead. */
+    adoptWorkers: z.boolean().default(true),
+    /** Forward moved workers' finished, failed and permission events to the current lead. */
+    relayWorkerEvents: z.boolean().default(true),
+    /** Workspaces idle this many days are cleanup candidates. */
+    staleWorkspaceDays: z.string().trim().default("3"),
   }),
 });
 

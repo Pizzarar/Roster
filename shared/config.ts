@@ -23,6 +23,11 @@ export interface BoardConfig {
   readonly groupUnassignedByFolder: boolean;
   readonly showStopButton: boolean;
   readonly countSubagents: boolean;
+  readonly detachNewLeads: boolean;
+  readonly adoptWorkers: boolean;
+  readonly relayWorkerEvents: boolean;
+  /** Milliseconds of inactivity before a workspace is a cleanup candidate. */
+  readonly staleWorkspaceMs: number;
 }
 
 export const DEFAULT_SETTINGS: RosterSettings = rosterSettings.schema.parse({});
@@ -49,6 +54,35 @@ const list = (value: string) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+const DAY_MS = 86_400_000;
+
+/** Why a stale-days value is unusable, or null. */
+export function daysError(value: string): string | null {
+  const days = Number(value);
+  return Number.isFinite(days) && days >= 0 ? null : "Enter a number of days, 0 or more";
+}
+
+function staleDays(value: string): number {
+  return daysError(value) ? 3 : Number(value);
+}
+
+/**
+ * Whether an agent is an active lead: a lead `role` label, else a lead title.
+ * Retired titles and retired roles never count.
+ */
+export function isLeadAgent(
+  title: string | null | undefined,
+  labels: Readonly<Record<string, string>>,
+  cfg: BoardConfig,
+): boolean {
+  const text = title ?? "";
+  if (cfg.hideTitle?.test(text)) return false;
+  const role = labels[cfg.labels.role];
+  const known = [...cfg.leadRoles, ...cfg.oldLeadRoles, ...cfg.brainstormRoles];
+  if (role !== undefined && known.includes(role)) return cfg.leadRoles.includes(role);
+  return cfg.leadTitle?.test(text) ?? false;
+}
+
 export function compileConfig(values: RosterSettings): BoardConfig {
   return {
     leadTitle: compile(values.leadTitlePattern, "i"),
@@ -66,6 +100,10 @@ export function compileConfig(values: RosterSettings): BoardConfig {
     groupUnassignedByFolder: values.groupUnassignedByFolder,
     showStopButton: values.showStopButton,
     countSubagents: values.countSubagents,
+    detachNewLeads: values.detachNewLeads,
+    adoptWorkers: values.adoptWorkers,
+    relayWorkerEvents: values.relayWorkerEvents,
+    staleWorkspaceMs: staleDays(values.staleWorkspaceDays) * DAY_MS,
   };
 }
 
