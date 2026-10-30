@@ -64,6 +64,87 @@ export function sidebarTitle(agent: BoardAgent, cfg: BoardConfig): string {
   return title.trim() || full;
 }
 
+export function leadArea(lead: BoardAgent, cfg: BoardConfig): string {
+  const title = sidebarTitle(lead, cfg);
+  const stripped = title
+    .replace(/^★?\s*LEAD\s*[·:-]?\s*/i, "")
+    .replace(/\s*\([^)]*\)\s*$/g, "")
+    .replace(/\s+\bord\d+\b.*$/i, "")
+    .trim();
+  return stripped || basename(lead.cwd);
+}
+
+export interface BrainstormCandidate {
+  readonly agent: BoardAgent;
+  readonly suggestedTitle: string;
+  readonly leadKey?: string;
+}
+
+export interface MissingBrainstormLead {
+  readonly lead: BoardAgent;
+  readonly area: string;
+}
+
+export interface BrainstormCoverage {
+  readonly candidates: readonly BrainstormCandidate[];
+  readonly missingLeads: readonly MissingBrainstormLead[];
+}
+
+export function analyzeBrainstormCoverage(agents: readonly BoardAgent[], cfg: BoardConfig): BrainstormCoverage {
+  const live = agents.filter((a) => !a.archivedAt && a.status !== "closed");
+  const brainstorms = live.filter(
+    (a) => agentKind(a, cfg) === "brainstorm" || /\bbrainstorm/i.test(a.title ?? ""),
+  );
+
+  const candidates: BrainstormCandidate[] = [];
+  for (const agent of brainstorms) {
+    const title = agent.title ?? "";
+    const isBrainstormRole = agent.labels[cfg.labels.role] === "brainstorm";
+    const matchesBrainstormTitle = /^BRAINSTORM\s*·\s*\S/i.test(title);
+    if (!matchesBrainstormTitle || !isBrainstormRole) {
+      const topic = displayTitle(agent)
+        .replace(/\bbrainstorming\b|\bbrainstorm\b/gi, "")
+        .replace(/\s*\([^)]*\)/g, "")
+        .replace(/\bord\d+\b/gi, "")
+        .replace(/^[·:\-\s]+|[·:\-\s]+$/g, "")
+        .trim() || basename(agent.cwd);
+      const suggestedTitle = matchesBrainstormTitle
+        ? displayTitle(agent)
+        : "BRAINSTORM · " + topic;
+      candidates.push({
+        agent,
+        suggestedTitle,
+        leadKey: agent.labels[cfg.labels.lead],
+      });
+    }
+  }
+
+  const missingLeads: MissingBrainstormLead[] = [];
+  for (const lead of live.filter((a) => agentKind(a, cfg) === "lead")) {
+    const area = leadArea(lead, cfg);
+    const words = area.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+    const leadKey = lead.labels[cfg.labels.lead];
+    const leadCwdNorm = normalizePath(lead.cwd);
+
+    const hasMatch = brainstorms.some((b) => {
+      const bLeadKey = b.labels[cfg.labels.lead];
+      if (leadKey && bLeadKey === leadKey) return true;
+      if (normalizePath(b.cwd) === leadCwdNorm) return true;
+      if (words.length > 0) {
+        const bTitleLower = (b.title ?? "").toLowerCase();
+        if (words.some((w) => bTitleLower.includes(w))) return true;
+      }
+      return false;
+    });
+
+    if (!hasMatch) {
+      missingLeads.push({ lead, area });
+    }
+  }
+
+  return { candidates, missingLeads };
+}
+
 export function basename(path: string): string {
   const parts = path.split(/[\\/]+/).filter(Boolean);
   return parts[parts.length - 1] ?? path;

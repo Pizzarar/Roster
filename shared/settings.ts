@@ -43,7 +43,7 @@ export const rosterSettings = defineSettings({
   schema: z.object({
     leadTitlePattern: z.string().default("^★ LEAD"),
     hideTitlePattern: z.string().default("^\\(old\\)"),
-    brainstormTitlePattern: z.string().default("^BRAINSTORM\\b"),
+    brainstormTitlePattern: z.string().default("\\bbrainstorm"),
     sidebarStripPattern: z.string().default("^★ LEAD · |\\s*\\(talk here:.*\\)\\s*$"),
     roleLabel: z.string().trim().default("role"),
     leadLabel: z.string().trim().default("lead"),

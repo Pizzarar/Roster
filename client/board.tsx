@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import {
   agentKind,
+  analyzeBrainstormCoverage,
   basename,
   chainedLeads,
   displayTitle,
@@ -12,12 +13,14 @@ import {
   matchesSearch,
   relativeTime,
   type BoardAgent,
+  type BrainstormCoverage,
   type LiveWorktree,
 } from "./model";
 import { boardStore, useBoard, useNow, useSubagentWatch, type SubagentCount } from "./store";
 import { PARENT_LABEL, type BoardConfig } from "../shared/config";
 import { stopAgentRpc } from "../shared/stop";
 import { fixChainedLeadsRpc, type HandoffRecord } from "../shared/handoff";
+import { createBrainstormRpc, renameBrainstormRpc } from "../shared/brainstorm";
 import { useBoardConfig } from "./config";
 import { attentionLabel, Chip, ConfirmButton, StatusDot, statusColor, subagentLabel } from "./ui";
 
@@ -248,6 +251,76 @@ function WorktreeRow({
 }
 
 /** Leads still chained to their spawner, and recent handoffs with their retired lead. */
+function BrainstormCoverageSection({
+  coverage,
+  theme,
+  styles,
+  onRename,
+  onCreate,
+}: {
+  coverage: BrainstormCoverage;
+  theme: Theme;
+  styles: Styles;
+  onRename: (candidate: BrainstormCoverage["candidates"][number]) => Promise<unknown>;
+  onCreate: (missing: BrainstormCoverage["missingLeads"][number]) => Promise<unknown>;
+}) {
+  return (
+    <>
+      <Text style={styles.section}>BRAINSTORM COVERAGE</Text>
+      <View style={styles.group}>
+        {coverage.candidates.map((item, index) => (
+          <View key={item.agent.id}>
+            {index > 0 ? <View style={styles.divider} /> : null}
+            <View style={styles.row}>
+              <View style={styles.rowBody}>
+                <Text style={styles.text} numberOfLines={1}>
+                  {displayTitle(item.agent)} → {item.suggestedTitle}
+                </Text>
+                <Text style={styles.muted} numberOfLines={1}>
+                  Rename and set role=brainstorm so it shows up in the sidebar
+                </Text>
+              </View>
+              <ConfirmButton
+                theme={theme}
+                label="Rename"
+                armedLabel="Confirm?"
+                busyLabel="Renaming…"
+                tone="accent"
+                accessibilityLabel={`Rename ${displayTitle(item.agent)} to ${item.suggestedTitle}`}
+                onConfirm={() => onRename(item)}
+              />
+            </View>
+          </View>
+        ))}
+        {coverage.missingLeads.map((item, index) => (
+          <View key={item.lead.id}>
+            {index > 0 || coverage.candidates.length > 0 ? <View style={styles.divider} /> : null}
+            <View style={styles.row}>
+              <View style={styles.rowBody}>
+                <Text style={styles.text} numberOfLines={1}>
+                  {item.area} has no brainstorm chat
+                </Text>
+                <Text style={styles.muted} numberOfLines={1}>
+                  {displayTitle(item.lead)} · {basename(item.lead.cwd)}
+                </Text>
+              </View>
+              <ConfirmButton
+                theme={theme}
+                label="Create brainstorm"
+                armedLabel="Spawn chat?"
+                busyLabel="Creating…"
+                tone="accent"
+                accessibilityLabel={`Create brainstorm chat for ${item.area}`}
+                onConfirm={() => onCreate(item)}
+              />
+            </View>
+          </View>
+        ))}
+      </View>
+    </>
+  );
+}
+
 function HandoffSection({
   chained,
   handoffs,
@@ -360,6 +433,8 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
   const paseo = usePaseo();
   const stopRpc = useRpc(stopAgentRpc);
   const fixChainsRpc = useRpc(fixChainedLeadsRpc);
+  const renameRpc = useRpc(renameBrainstormRpc);
+  const createRpc = useRpc(createBrainstormRpc);
   const [query, setQuery] = useState("");
   const [showOld, setShowOld] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -385,6 +460,7 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
   const relays = board.handoffs.relays;
   const groups = useMemo(() => groupAgents(all, visible, cfg, relays), [all, visible, cfg, relays]);
   const chained = useMemo(() => chainedLeads(live, cfg), [live, cfg]);
+  const coverage = useMemo(() => analyzeBrainstormCoverage(live, cfg), [live, cfg]);
   const worktrees = useMemo(() => liveWorktrees(live), [live]);
   useSubagentWatch(
     useMemo(
@@ -431,6 +507,36 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
       toast.show(`Archived ${displayTitle(agent)}`);
     } catch (error) {
       toast.error(`Archive failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const renameCandidate = async (candidate: BrainstormCoverage["candidates"][number]) => {
+    try {
+      const res = await renameRpc({
+        agentId: candidate.agent.id,
+        title: candidate.suggestedTitle,
+        leadKey: candidate.leadKey,
+      });
+      if (res.ok) toast.show(res.message);
+      else toast.error(res.message);
+    } catch (error) {
+      toast.error(`Rename failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const createBrainstorm = async (missing: BrainstormCoverage["missingLeads"][number]) => {
+    try {
+      const res = await createRpc({
+        leadId: missing.lead.id,
+        leadTitle: displayTitle(missing.lead),
+        area: missing.area,
+        cwd: missing.lead.cwd,
+      });
+      if (res.ok) toast.show(res.message);
+      else toast.error(res.message);
+      if (res.agentId && navigation) {
+        navigation.openAgent({ agentId: res.agentId });
+      }
+    } catch (error) {
+      toast.error(`Create failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
   const openWorktree = (worktree: LiveWorktree) => {
@@ -519,6 +625,16 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
           </View>
         );
       })}
+
+      {cfg.brainstormPreset && (coverage.candidates.length > 0 || coverage.missingLeads.length > 0) ? (
+        <BrainstormCoverageSection
+          coverage={coverage}
+          theme={theme}
+          styles={styles}
+          onRename={renameCandidate}
+          onCreate={createBrainstorm}
+        />
+      ) : null}
 
       {cfg.leadsPreset ? (
         <HandoffSection

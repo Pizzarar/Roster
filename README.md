@@ -33,6 +33,7 @@ Tap an agent to jump to its chat. Closed and archived agents are never shown.
 - An **id** button that copies an agent's id, for use with `paseo send`, `paseo logs` and so on.
 
 - **Lead handoffs**: how many leads are still a sub-agent of another agent, with a two-tap **Fix**, plus recent handoffs with a two-tap **Archive old lead**. Workers moved to a new lead are grouped under it with a "handed over" chip.
+- **Brainstorm coverage**: finds existing brainstorm chats that need standardizing (`role=brainstorm` and naming) to show up in the sidebar, and offers one-tap brainstorm chat creation for active leads that lack one.
 
 Open it from the sidebar, or with **Ctrl+K / ⌘K → Open Roster**.
 

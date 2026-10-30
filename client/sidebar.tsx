@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { TrackerConfig } from "../shared/config";
 import { useBoardConfig } from "./config";
-import { compareAgents, isTracked, sidebarTitle, type BoardAgent } from "./model";
+import { analyzeBrainstormCoverage, compareAgents, isTracked, sidebarTitle, type BoardAgent } from "./model";
 import { BOARD_SCREEN, OPEN_AGENT_SCREEN, WORKSPACES_SCREEN, navigationOf } from "./navigation";
 import { useBoard, useSubagentWatch } from "./store";
 import { attentionLabel, Chip, dotIcon, statusColor, subagentLabel } from "./ui";
@@ -31,6 +31,13 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
       running: agents.filter((agent) => agent.status === "running").length,
     };
   }, [board.agents, cfg]);
+  const coverage = useMemo(
+    () =>
+      cfg.brainstormPreset
+        ? analyzeBrainstormCoverage([...board.agents.values()], cfg)
+        : { candidates: [], missingLeads: [] },
+    [board.agents, cfg],
+  );
   const watched = useMemo(
     () =>
       cfg.countSubagents
@@ -157,6 +164,20 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
             ) : null}
           </>
         )}
+        {!shut && tracker.kind === "brainstorm" && (coverage.candidates.length > 0 || coverage.missingLeads.length > 0) ? (
+          <SidebarRow
+            id="brainstorm-coverage"
+            icon="LayoutList"
+            label={
+              coverage.missingLeads.length > 0 && coverage.candidates.length > 0
+                ? `${coverage.missingLeads.length} missing · ${coverage.candidates.length} to rename`
+                : coverage.missingLeads.length > 0
+                  ? `${coverage.missingLeads.length} active without brainstorm`
+                  : `${coverage.candidates.length} to rename`
+            }
+            onPress={openBoard}
+          />
+        ) : null}
       </View>
     );
   };

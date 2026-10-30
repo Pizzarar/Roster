@@ -1,6 +1,8 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { createBrainstorm, renameBrainstorm } from "./server/brainstorm";
 import { Handoffs } from "./server/handoff";
 import { stopAgent } from "./server/stop";
+import { createBrainstormRpc, renameBrainstormRpc } from "./shared/brainstorm";
 import { fixChainedLeadsRpc, handoffStateRpc, promoteLeadRpc } from "./shared/handoff";
 import { rosterSettings } from "./shared/settings";
 import { stopAgentRpc } from "./shared/stop";
@@ -15,6 +17,8 @@ export default function contribute(server: PluginServerContext) {
   const stopSettings = handoffs.start();
 
   server.handle(stopAgentRpc, stopAgent);
+  server.handle(renameBrainstormRpc, renameBrainstorm);
+  server.handle(createBrainstormRpc, (input, { paseo }) => createBrainstorm(input, paseo));
   server.handle(handoffStateRpc, () => handoffs.snapshot());
   server.handle(promoteLeadRpc, ({ agentId }, { paseo }) => handoffs.promote(agentId, paseo));
   server.handle(fixChainedLeadsRpc, (_input, { paseo }) => handoffs.fixChains(paseo));
