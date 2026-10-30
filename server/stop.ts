@@ -2,8 +2,6 @@ import type { RpcInput } from "@getpaseo/plugin";
 import { execCommand } from "@getpaseo/plugin/server";
 import type { stopAgentRpc } from "../shared/stop";
 
-// The scaffold ships without @types/node; declare only what this module reads.
-declare const process: { platform: string; env: Record<string, string | undefined> };
 
 /** The daemon's PATH may not include the npm global bin, so try it explicitly too. */
 function paseoCandidates(): string[] {

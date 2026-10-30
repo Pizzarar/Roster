@@ -1,4 +1,4 @@
-import { PARENT_LABEL, type BoardConfig } from "../shared/config";
+import { isLeadAgent, PARENT_LABEL, type BoardConfig } from "../shared/config";
 
 export type AgentStatus = "initializing" | "idle" | "running" | "error" | "closed";
 
@@ -101,6 +101,14 @@ export function matchesSearch(agent: BoardAgent, query: string): boolean {
   return q.split(/\s+/).every((term) => haystack.includes(term));
 }
 
+/** Moved worker id -> the lead it reports to now (from Roster's handoff relay). */
+export type Relays = Readonly<Record<string, string>>;
+
+/** The spawner label, else the lead a handoff moved this worker to. */
+export function parentOf(agent: BoardAgent, relays: Relays): string | undefined {
+  return agent.labels[PARENT_LABEL] ?? relays[agent.id];
+}
+
 export interface BoardGroup {
   readonly key: string;
   readonly title: string;
@@ -122,6 +130,7 @@ function groupKeyOf(
   byId: ReadonlyMap<string, BoardAgent>,
   parents: ReadonlySet<string>,
   cfg: BoardConfig,
+  relays: Relays,
 ): string {
   const seen = new Set<string>();
   let current: BoardAgent | undefined = agent;
@@ -132,7 +141,7 @@ function groupKeyOf(
     const lead = current.labels[cfg.labels.lead];
     if (lead) return `lead:${lead}`;
     if (current !== agent && agentKind(current, cfg) === "lead") return `agent:${current.id}`;
-    const parentId: string | undefined = current.labels[PARENT_LABEL];
+    const parentId = parentOf(current, relays);
     current = parentId ? byId.get(parentId) : undefined;
   }
   if (root !== agent) return `agent:${root.id}`;
@@ -153,16 +162,17 @@ export function groupAgents(
   all: readonly BoardAgent[],
   visible: readonly BoardAgent[],
   cfg: BoardConfig,
+  relays: Relays = {},
 ): BoardGroup[] {
   const byId = new Map(all.map((agent) => [agent.id, agent]));
   const parents = new Set<string>();
   for (const agent of all) {
-    const parentId = agent.labels[PARENT_LABEL];
+    const parentId = parentOf(agent, relays);
     if (parentId && byId.has(parentId)) parents.add(parentId);
   }
   const buckets = new Map<string, BoardAgent[]>();
   for (const agent of visible) {
-    const key = groupKeyOf(agent, byId, parents, cfg);
+    const key = groupKeyOf(agent, byId, parents, cfg, relays);
     const bucket = buckets.get(key);
     if (bucket) bucket.push(agent);
     else buckets.set(key, [agent]);
@@ -220,4 +230,11 @@ export function liveWorktrees(agents: readonly BoardAgent[]): LiveWorktree[] {
       };
     })
     .sort((a, b) => compareAgents(a.agents[0]!, b.agents[0]!) || a.name.localeCompare(b.name));
+}
+
+/** Live leads that are still children of another agent: the chains a handoff fixes. */
+export function chainedLeads(agents: readonly BoardAgent[], cfg: BoardConfig): BoardAgent[] {
+  return agents.filter(
+    (agent) => !agent.archivedAt && agent.labels[PARENT_LABEL] && isLeadAgent(agent.title, agent.labels, cfg),
+  );
 }

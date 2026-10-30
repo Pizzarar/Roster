@@ -11,3 +11,5 @@ export function navigationOf(props: object): Navigation | undefined {
   const navigation = (props as { navigation?: Partial<Navigation> }).navigation;
   return typeof navigation?.openAgent === "function" ? (navigation as Navigation) : undefined;
 }
+
+export const WORKSPACES_SCREEN = "workspaces";

@@ -1,10 +1,11 @@
-import { useRpc, type PluginScreenProps } from "@getpaseo/plugin/client";
+import { usePaseo, useRpc, type PluginScreenProps } from "@getpaseo/plugin/client";
 import { copyText, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/ui";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import {
   agentKind,
   basename,
+  chainedLeads,
   displayTitle,
   groupAgents,
   liveWorktrees,
@@ -14,14 +15,15 @@ import {
   type LiveWorktree,
 } from "./model";
 import { boardStore, useBoard, useNow, useSubagentWatch, type SubagentCount } from "./store";
-import type { BoardConfig } from "../shared/config";
+import { PARENT_LABEL, type BoardConfig } from "../shared/config";
 import { stopAgentRpc } from "../shared/stop";
+import { fixChainedLeadsRpc, type HandoffRecord } from "../shared/handoff";
 import { useBoardConfig } from "./config";
-import { attentionLabel, Chip, StatusDot, statusColor, subagentLabel } from "./ui";
+import { attentionLabel, Chip, ConfirmButton, StatusDot, statusColor, subagentLabel } from "./ui";
 
 type Theme = PluginScreenProps["theme"];
 
-function makeStyles(theme: Theme, compact: boolean) {
+export function makeStyles(theme: Theme, compact: boolean) {
   return {
     screen: { flex: 1, backgroundColor: theme.colors.surface0 },
     content: { padding: compact ? 12 : 24, gap: compact ? 12 : 16, paddingBottom: 48 },
@@ -75,9 +77,9 @@ function makeStyles(theme: Theme, compact: boolean) {
     },
   };
 }
-type Styles = ReturnType<typeof makeStyles>;
+export type Styles = ReturnType<typeof makeStyles>;
 
-function Toggle({
+export function Toggle({
   theme,
   label,
   value,
@@ -114,6 +116,7 @@ function Toggle({
 function AgentRow({
   agent,
   indent,
+  relayed,
   subagents,
   now,
   cfg,
@@ -125,6 +128,8 @@ function AgentRow({
 }: {
   agent: BoardAgent;
   indent: boolean;
+  /** Moved here by a handoff; its events are relayed to this group's lead. */
+  relayed: boolean;
   subagents: SubagentCount | undefined;
   now: number;
   cfg: BoardConfig;
@@ -169,6 +174,7 @@ function AgentRow({
             ) : null}
             {subagentText ? <Chip theme={theme} label={subagentText} tone="accent" /> : null}
             {kind === "old-lead" ? <Chip theme={theme} label="old" /> : null}
+            {relayed ? <Chip theme={theme} label="handed over" tone="accent" /> : null}
             {agent.archivedAt ? <Chip theme={theme} label="archived" /> : null}
             {task ? <Chip theme={theme} label={task} /> : null}
           </View>
@@ -178,7 +184,14 @@ function AgentRow({
         </View>
       </Pressable>
       {cfg.showStopButton && agent.status === "running" && !agent.archivedAt ? (
-        <StopButton agent={agent} theme={theme} styles={styles} onStop={onStop} />
+        <ConfirmButton
+          theme={theme}
+          label="Stop"
+          armedLabel="Confirm stop"
+          busyLabel="Stopping…"
+          accessibilityLabel={`Stop ${displayTitle(agent)}`}
+          onConfirm={() => onStop(agent)}
+        />
       ) : null}
       <Pressable
         accessibilityRole="button"
@@ -189,52 +202,6 @@ function AgentRow({
         <Text style={styles.muted}>id</Text>
       </Pressable>
     </View>
-  );
-}
-
-/** Two taps: the first arms it for a few seconds, the second interrupts the running turn. */
-function StopButton({
-  agent,
-  theme,
-  styles,
-  onStop,
-}: {
-  agent: BoardAgent;
-  theme: Theme;
-  styles: Styles;
-  onStop(agent: BoardAgent): Promise<void>;
-}) {
-  const [state, setState] = useState<"idle" | "armed" | "stopping">("idle");
-  useEffect(() => {
-    if (state !== "armed") return undefined;
-    const timer = setTimeout(() => setState("idle"), 4000);
-    return () => clearTimeout(timer);
-  }, [state]);
-  const danger = theme.colors.statusDanger;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={
-        state === "armed" ? `Confirm stop ${displayTitle(agent)}` : `Stop ${displayTitle(agent)}`
-      }
-      disabled={state === "stopping"}
-      onPress={() => {
-        if (state === "idle") setState("armed");
-        else if (state === "armed") {
-          setState("stopping");
-          void onStop(agent).finally(() => setState("idle"));
-        }
-      }}
-      style={[
-        styles.smallButton,
-        { borderColor: danger },
-        state === "armed" ? { backgroundColor: danger } : null,
-      ]}
-    >
-      <Text style={{ fontSize: 12, color: state === "armed" ? theme.colors.surface0 : danger }}>
-        {state === "armed" ? "Confirm stop" : state === "stopping" ? "Stopping…" : "Stop"}
-      </Text>
-    </Pressable>
   );
 }
 
@@ -280,13 +247,119 @@ function WorktreeRow({
   );
 }
 
+/** Leads still chained to their spawner, and recent handoffs with their retired lead. */
+function HandoffSection({
+  chained,
+  handoffs,
+  agents,
+  cfg,
+  now,
+  theme,
+  styles,
+  onOpen,
+  onFix,
+  onArchive,
+}: {
+  chained: readonly BoardAgent[];
+  handoffs: readonly HandoffRecord[];
+  agents: ReadonlyMap<string, BoardAgent>;
+  cfg: BoardConfig;
+  now: number;
+  theme: Theme;
+  styles: Styles;
+  onOpen(agent: BoardAgent): void;
+  onFix(): Promise<void>;
+  onArchive(agent: BoardAgent): Promise<void>;
+}) {
+  const recent = handoffs.slice(0, 8);
+  if (chained.length === 0 && recent.length === 0) return null;
+  const name = (id: string) => {
+    const agent = agents.get(id);
+    return agent ? displayTitle(agent) : `${id.slice(0, 8)} (archived)`;
+  };
+  const liveChildren = (id: string) => [...agents.values()].filter((agent) => agent.labels[PARENT_LABEL] === id).length;
+  return (
+    <>
+      <Text style={styles.section}>LEAD HANDOFFS</Text>
+      <View style={styles.group}>
+        {chained.length > 0 ? (
+          <View style={styles.row}>
+            <View style={styles.rowBody}>
+              <Text style={styles.text}>
+                {chained.length} lead{chained.length === 1 ? " is" : "s are"} still a sub-agent of another agent
+              </Text>
+              <Text style={styles.muted} numberOfLines={2}>
+                {chained.map((lead) => displayTitle(lead)).join(", ")}
+              </Text>
+              <Text style={styles.muted}>
+                {cfg.adoptWorkers
+                  ? "Fix detaches each lead and moves its old lead's workers to it."
+                  : "Fix detaches each lead from its spawner."}
+              </Text>
+            </View>
+            <ConfirmButton
+              theme={theme}
+              label="Fix"
+              armedLabel={`Fix ${chained.length}?`}
+              busyLabel="Fixing…"
+              tone="accent"
+              accessibilityLabel={`Detach ${chained.length} chained leads`}
+              onConfirm={onFix}
+            />
+          </View>
+        ) : null}
+        {recent.map((handoff, index) => {
+          const oldLead = agents.get(handoff.oldLeadId);
+          const newLead = agents.get(handoff.newLeadId);
+          const children = liveChildren(handoff.oldLeadId);
+          return (
+            <View key={`${handoff.oldLeadId}-${handoff.at}`}>
+              {index > 0 || chained.length > 0 ? <View style={styles.divider} /> : null}
+              <View style={styles.row}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${name(handoff.newLeadId)}`}
+                  disabled={!newLead}
+                  onPress={() => newLead && onOpen(newLead)}
+                  style={({ pressed }) => [styles.rowBody, pressed ? styles.rowPressed : null]}
+                >
+                  <Text style={styles.text} numberOfLines={1}>
+                    {name(handoff.oldLeadId)} → {name(handoff.newLeadId)}
+                  </Text>
+                  <Text style={styles.muted} numberOfLines={1}>
+                    {relativeTime(handoff.at, now)} · moved {handoff.moved.length} worker
+                    {handoff.moved.length === 1 ? "" : "s"}
+                    {oldLead && children > 0 ? ` · old lead still has ${children} sub-agent${children === 1 ? "" : "s"}` : ""}
+                  </Text>
+                </Pressable>
+                {oldLead ? (
+                  <ConfirmButton
+                    theme={theme}
+                    label="Archive old lead"
+                    armedLabel={children > 0 ? `Also archives ${children}?` : "Confirm archive"}
+                    busyLabel="Archiving…"
+                    accessibilityLabel={`Archive ${displayTitle(oldLead)}`}
+                    onConfirm={() => onArchive(oldLead)}
+                  />
+                ) : null}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    </>
+  );
+}
+
 export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProps) {
   const styles = useMemo(() => makeStyles(theme, layout.compact), [theme, layout.compact]);
   const board = useBoard();
   const cfg = useBoardConfig();
   const now = useNow();
   const toast = useToast();
+  const paseo = usePaseo();
   const stopRpc = useRpc(stopAgentRpc);
+  const fixChainsRpc = useRpc(fixChainedLeadsRpc);
   const [query, setQuery] = useState("");
   const [showOld, setShowOld] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -309,7 +382,9 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
       ),
     [all, showOld, query, cfg],
   );
-  const groups = useMemo(() => groupAgents(all, visible, cfg), [all, visible, cfg]);
+  const relays = board.handoffs.relays;
+  const groups = useMemo(() => groupAgents(all, visible, cfg, relays), [all, visible, cfg, relays]);
+  const chained = useMemo(() => chainedLeads(live, cfg), [live, cfg]);
   const worktrees = useMemo(() => liveWorktrees(live), [live]);
   useSubagentWatch(
     useMemo(
@@ -338,6 +413,24 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
       else toast.error(`Stop failed: ${result.message}`);
     } catch (error) {
       toast.error(`Stop failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const fixChains = async () => {
+    try {
+      const result = await fixChainsRpc({});
+      if (result.ok) toast.show(result.message);
+      else toast.error(result.message);
+    } catch (error) {
+      toast.error(`Fix failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    await boardStore.refreshHandoffs();
+  };
+  const archiveAgent = async (agent: BoardAgent) => {
+    try {
+      await paseo.agents.ref(agent.id).archive();
+      toast.show(`Archived ${displayTitle(agent)}`);
+    } catch (error) {
+      toast.error(`Archive failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
   const openWorktree = (worktree: LiveWorktree) => {
@@ -411,6 +504,7 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
                 <AgentRow
                   agent={agent}
                   indent={hasLead && agent.id !== group.rootId && agentKind(agent, cfg) === "worker"}
+                  relayed={agent.id in board.handoffs.relays}
                   subagents={board.subagents.get(agent.id)}
                   now={now}
                   cfg={cfg}
@@ -425,6 +519,19 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
           </View>
         );
       })}
+
+      <HandoffSection
+        chained={chained}
+        handoffs={board.handoffs.handoffs}
+        agents={board.agents}
+        cfg={cfg}
+        now={now}
+        theme={theme}
+        styles={styles}
+        onOpen={openAgent}
+        onFix={fixChains}
+        onArchive={archiveAgent}
+      />
 
       <Text style={styles.section}>WORKTREES WITH LIVE AGENTS ({worktrees.length})</Text>
       <View style={styles.group}>
