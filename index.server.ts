@@ -5,12 +5,6 @@ import { fixChainedLeadsRpc, handoffStateRpc, promoteLeadRpc } from "./shared/ha
 import { rosterSettings } from "./shared/settings";
 import { stopAgentRpc } from "./shared/stop";
 
-const LEAD_POINTER =
-  "To find a project's current lead: run `paseo ls -g --json` and pick the agent whose cwd matches the project and whose name starts with ★ LEAD (never one starting with (old)).";
-
-const LABEL_INSTRUCTION =
-  'Roster: once you know your role, set your title and labels with Paseo\'s update_agent tool (or `paseo agent update <PASEO_AGENT_ID> --name ... --label ...` if the MCP tool is unavailable). A lead sets title `★ LEAD · <project>` and labels `role=lead,lead=<project>`; a brainstorm chat sets title `BRAINSTORM · <topic>` and label `role=brainstorm`; a worker sets labels `role=worker,lead=<project>,task=<short task name>`. Pass `lead=<project>` on to agents you spawn.';
-
 function appendLine(systemPrompt: string, line: string): string {
   if (systemPrompt.includes(line)) return systemPrompt;
   return systemPrompt.trim() ? `${systemPrompt.trim()}\n\n${line}` : line;
@@ -28,8 +22,16 @@ export default function contribute(server: PluginServerContext) {
   // Tell every new agent how to find a project's current lead, and optionally how to label itself.
   server.before("agent.create", ({ request }) => {
     const original = request.config.systemPrompt ?? "";
-    let systemPrompt = appendLine(original, LEAD_POINTER);
-    if (handoffs.config.labelInstruction) systemPrompt = appendLine(systemPrompt, LABEL_INSTRUCTION);
+    let systemPrompt = original;
+    if (handoffs.config.leadPointerPrompt) {
+      systemPrompt = appendLine(systemPrompt, handoffs.config.leadPointerPrompt);
+    }
+    if (handoffs.config.brainstormPrompt) {
+      systemPrompt = appendLine(systemPrompt, handoffs.config.brainstormPrompt);
+    }
+    if (handoffs.config.leadPrompt) {
+      systemPrompt = appendLine(systemPrompt, handoffs.config.leadPrompt);
+    }
     if (systemPrompt === original) return;
     return { ...request, config: { ...request.config, systemPrompt } };
   });

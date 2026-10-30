@@ -120,15 +120,15 @@ If your agents follow a naming rule instead, change the title patterns in settin
 Find them under **Settings → Plugins → Roster**, or **Ctrl+K → Roster settings**. They apply to everyone connected to the same daemon.
 
 - **Sidebar sections**: what the sidebar box tracks, top to bottom. **+ Add section** adds one; each has a name, what it shows (Leads, Brainstorm chats, Folder contains, Title matches, Label equals), a pattern where needed, and a row limit. For example, a section showing **Folder contains** `Brain Squad` tracks every live chat in that folder.
-- **Title patterns**: case-insensitive regular expressions for leads, retired leads and brainstorm. Leave one empty to turn it off.
-- **Sidebar label strip**: removed from lead titles in the sidebar. With the default, `★ LEAD · MAIN GAME ord47 (talk here: …)` shows as `MAIN GAME ord47`.
-- **Label keys and role values**: change these if you use something other than `role` / `lead` / `task`.
-- **Group unlabelled agents by folder**: turn this off to put them all under Unassigned.
-- **Show Stop on running agents**: turn this off for a strictly read-only board.
-- **Count sub-agents**: turn this off to skip the timeline polling described below.
-- **Detach new leads**, **Hand workers to the new lead**, **Relay handed-over workers**: the three parts of [lead handoffs](#lead-handoffs). All on by default.
-- **Ask new agents to name and label themselves**: off by default. Adds one line to every new agent's system prompt asking brainstorm chats and leads to title themselves (`BRAINSTORM · <topic>`, `★ LEAD · <project>`) and all agents to set `role`, `lead` and `task` labels with Paseo's `update_agent` tool (or `paseo agent update`).
-- **Stale workspace days**: how many idle days make a workspace a cleanup candidate.
+- **Workflow presets**:
+  - **Brainstorm preset**: pinned Brainstorm matching and auto-naming prompt. Includes an independent switch to ask brainstorm chats to name and label themselves, prompt text customization, title pattern (`^BRAINSTORM\b`), and role label values. Can be removed to turn off brainstorm matching/auto-naming, and restored at any time.
+  - **Leads & handoffs preset**: full lead matching, handoffs, and prompts. Includes independent switches to ask leads/workers to name and label themselves (`leadPromptEnabled`), tell new agents how to find a project's lead (`leadPointerEnabled`), plus handoff toggles (`detachNewLeads`, `adoptWorkers`, `relayWorkerEvents`), title patterns (`leadTitlePattern`, `hideTitlePattern`, `sidebarStripPattern`), and role lists (`leadRoles`, `oldLeadRoles`). Can be removed to turn off lead matching, handoffs, and lead prompts, and restored at any time.
+- **Board & workspaces**:
+  - **Group unlabelled agents by folder**: turn this off to put them all under Unassigned.
+  - **Show Stop on running agents**: turn this off for a strictly read-only board.
+  - **Count sub-agents**: turn this off to skip the timeline polling described below.
+  - **Role / Group / Task label keys**: change these if you use custom label keys instead of `role`, `lead`, or `task`.
+  - **Stale workspace days**: how many idle days make a workspace a cleanup candidate.
 
 ## Sub-agent counts
 

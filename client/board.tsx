@@ -468,7 +468,7 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
         accessibilityLabel="Search agents"
       />
       <View style={styles.toggles}>
-        <Toggle theme={theme} label="Old leads" value={showOld} onChange={setShowOld} />
+        {cfg.leadsPreset ? <Toggle theme={theme} label="Old leads" value={showOld} onChange={setShowOld} /> : null}
         <Toggle theme={theme} label="Archived" value={showArchived} onChange={setShowArchived} />
         <Toggle
           theme={theme}
@@ -484,7 +484,7 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
         <Text style={styles.muted}>Could not load archived agents.</Text>
       ) : null}
 
-      <Text style={styles.section}>AGENTS BY LEAD</Text>
+      <Text style={styles.section}>{cfg.leadsPreset ? "AGENTS BY LEAD" : "AGENTS"}</Text>
       {groups.length === 0 && board.status === "ready" ? (
         <Text style={styles.muted}>No agents match.</Text>
       ) : null}
@@ -520,18 +520,20 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
         );
       })}
 
-      <HandoffSection
-        chained={chained}
-        handoffs={board.handoffs.handoffs}
-        agents={board.agents}
-        cfg={cfg}
-        now={now}
-        theme={theme}
-        styles={styles}
-        onOpen={openAgent}
-        onFix={fixChains}
-        onArchive={archiveAgent}
-      />
+      {cfg.leadsPreset ? (
+        <HandoffSection
+          chained={chained}
+          handoffs={board.handoffs.handoffs}
+          agents={board.agents}
+          cfg={cfg}
+          now={now}
+          theme={theme}
+          styles={styles}
+          onOpen={openAgent}
+          onFix={fixChains}
+          onArchive={archiveAgent}
+        />
+      ) : null}
 
       <Text style={styles.section}>WORKTREES WITH LIVE AGENTS ({worktrees.length})</Text>
       <View style={styles.group}>

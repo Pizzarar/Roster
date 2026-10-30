@@ -17,18 +17,12 @@ Agreed between `★ LEAD · PLUGINS ord4` (`56979d5e`) and `Brainstorm Quickstar
 - **Titles vs. labels:** `labelInstruction` previously asked agents only to set `role`/`lead`/`task` labels (not their display title), and CLI providers without Paseo's MCP `update_agent` tool need the `paseo agent update` CLI fallback.
 - **Review rule (2026-10-30):** Cross-family review is required only for EFI main development. Side projects like Roster may use same-family review, but never the author's own session and always a different model from the author (e.g., Sonnet reviews Opus, or Gemini Argon reviews Sonnet/Flash).
 
-## 3. Proposed Next Steps for Roster (Owner Decision)
+## 3. Workflow Presets Settings Redesign (Implemented)
 
 Aub's feedback: settings should act like **editable/removable presets** starting from what the user actually tracks, rather than a permanent wall of Lead/label/pattern fields.
 
-### Options for Settings Redesign
-
-1. **Option A — Removable Workflow Presets (Recommended):**
-   - Replace the fixed Pattern/Label/Handoff sections with optional, removable presets:
-     - **Brainstorm preset:** Sidebar section for Brainstorm chats + optional auto-title (`BRAINSTORM · <topic>`).
-     - **Lead handoff & routing preset:** Background lead detach, worker adoption/relay, and lead-finder prompt line — works without pinning Leads in the sidebar if you remove the Leads section.
-   - Any preset can be edited or removed completely; an "Advanced" drawer hides raw regex/label keys unless customized.
-2. **Option B — Section-Scoped Rules:**
-   - Attach title/label matching and auto-naming rules directly to each **Sidebar section** card. Removing a section removes its naming/matching rules, leaving only a single toggle for background child detachment.
-3. **Option C — Minimalist (Folder/Title Trackers Only):**
-   - Strip Lead/Brainstorm special-casing from settings entirely; every sidebar section is just a saved filter preset (Folder, Title regex, or Label) that can be added, edited, or deleted.
+**Option A — Removable Workflow Presets (Implemented):**
+- Replaced the fixed Pattern/Label/Behaviour sections with modular preset cards:
+  - **Brainstorm preset:** Pinned Brainstorm matching, independent prompt switch (`brainstormPromptEnabled`), editable prompt, title pattern, and role values. Removing turns off brainstorm matching and auto-naming; restoring re-adds the default tracker and patterns.
+  - **Leads & handoffs preset:** Lead and worker auto-naming switch (`leadPromptEnabled`), lead lookup pointer switch (`leadPointerEnabled`), handoff switches (`detachNewLeads`, `adoptWorkers`, `relayWorkerEvents`), title patterns, and role lists. Removing turns off lead matching, handoffs, and lead prompts; restoring re-adds the default leads tracker and configurations.
+- **Board & workspaces section:** General board settings (`groupUnassignedByFolder`, `showStopButton`, `countSubagents`), label key mapping, and stale workspace cleanup days.
