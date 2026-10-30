@@ -21,13 +21,13 @@ export const autoArchiveStateSchema = z.object({
 export type AutoArchiveState = z.output<typeof autoArchiveStateSchema>;
 
 export const autoArchiveStateRpc = defineRpc({
-  name: "autoArchive.state",
+  name: "auto-archive.state",
   input: z.object({}),
   output: autoArchiveStateSchema,
 });
 
 export const runAutoArchiveRpc = defineRpc({
-  name: "autoArchive.run",
+  name: "auto-archive.run",
   input: z.object({ dryRun: z.boolean().optional() }),
   output: autoArchiveStateSchema,
 });

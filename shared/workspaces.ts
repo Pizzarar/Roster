@@ -12,7 +12,7 @@ export type WorkspaceMergeInfo = z.output<typeof workspaceMergeInfoSchema>;
 
 /** Detect squash-merged PRs and deleted upstream branches for worktree workspaces. */
 export const checkWorkspaceMergesRpc = defineRpc({
-  name: "workspaces.checkMerges",
+  name: "workspaces.check-merges",
   input: z.object({
     workspaces: z.array(
       z.object({
