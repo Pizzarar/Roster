@@ -1,6 +1,6 @@
 # Roster
 
-A [Paseo](https://paseo.sh) plugin for people running a lot of agents at once. It pins your lead agents above Workspaces in the sidebar and adds a board of every agent on the daemon, grouped by who leads or spawned them.
+A [Paseo](https://paseo.sh) plugin for people running a lot of agents at once. It pins your lead agents above Workspaces in the sidebar, adds a board of every agent on the daemon grouped by who leads or spawned them, hands workers over cleanly when one lead replaces another, and gives you a screen for sorting and cleaning up workspaces.
 
 It came out of two daily annoyances:
 
@@ -29,7 +29,35 @@ Tap a lead to jump to its chat.
 - **Stop** on running agents (tap twice). It runs `paseo stop`, which interrupts the current turn. It never archives or deletes anything, and it does nothing to idle agents.
 - An **id** button that copies an agent's id, for use with `paseo send`, `paseo logs` and so on.
 
+- **Lead handoffs**: how many leads are still a sub-agent of another agent, with a two-tap **Fix**, plus recent handoffs with a two-tap **Archive old lead**. Workers moved to a new lead are grouped under it with a "handed over" chip.
+
 Open it from the sidebar, or with **Ctrl+K / ⌘K → Open Roster**.
+
+**The Workspaces screen**
+
+Open it from the **Workspaces** row in the sidebar, or with **Ctrl+K → Roster: workspaces and cleanup**.
+
+- Every workspace, kept live. Sort by cleanup candidates first, most recent, name or project, and optionally group by project.
+- Filters: **safe to clean**, **check first** and **in use**.
+- Chips for branch, uncommitted changes, commits ahead, PR merged or open, and pinned.
+- **Archive** (tap twice) on one workspace, or **Archive N** for every safe one at once.
+- Archive is blocked for workspaces with running agents or services, pinned workspaces, Paseo worktrees with uncommitted changes, and anything that isn't a worktree.
+
+Archiving a Paseo-owned worktree deletes its folder, so the confirm button reads **Delete folder?**. A workspace counts as stale after the number of days in settings (3 by default).
+
+## Lead handoffs
+
+When a lead gets near its context limit, it usually spawns its replacement. By default Paseo makes the new lead a sub-agent of the old one. That causes two problems: the old lead keeps being woken by the new lead's finish notices, and archiving the old lead also archives the new one and its workers.
+
+Roster fixes this:
+
+- **Detach**: as soon as a new lead is created by another agent, Roster detaches it. A new lead is an agent with a lead role label or a title matching the lead pattern.
+- **Adopt**: if the spawner was a lead, the new lead becomes its successor. The old lead's live workers are detached and assigned to the new lead. A worker the old lead spawns later is moved too.
+- **Relay**: when a moved worker finishes, fails or asks for permission, Roster sends a short `[Roster relay]` message to its current lead, following the chain of successors.
+
+To make an existing agent a lead by hand, use **Ctrl+K → Roster: promote to lead** on that agent. Handoff state is kept in `~/.paseo/plugin-data/roster/handoffs.json`.
+
+**Finding the lead.** Roster also adds one line to every new agent's system prompt telling it how to find a project's current lead: `paseo ls -g --json`, then the agent in that project's folder whose name starts with `★ LEAD` and not `(old)`.
 
 ## Install
 
@@ -94,6 +122,8 @@ Find them under **Settings → Plugins → Roster**, or **Ctrl+K → Roster sett
 - **Group unlabelled agents by folder**: turn this off to put them all under Unassigned.
 - **Show Stop on running agents**: turn this off for a strictly read-only board.
 - **Count sub-agents**: turn this off to skip the timeline polling described below.
+- **Detach new leads**, **Hand workers to the new lead**, **Relay handed-over workers**: the three parts of [lead handoffs](#lead-handoffs). All on by default.
+- **Stale workspace days**: how many idle days make a workspace a cleanup candidate.
 
 ## Sub-agent counts
 
@@ -118,8 +148,8 @@ paseo plugin logs roster                         # server output
 
 Layout:
 
-- `index.client.tsx` and `client/`: the sidebar, screens and settings.
-- `index.server.ts` and `server/`: the Stop handler.
+- `index.client.tsx` and `client/`: the sidebar, the Roster and Workspaces screens, and settings.
+- `index.server.ts` and `server/`: Stop, lead handoffs and relays, and the lead-finding system-prompt line.
 - `shared/`: the settings schema and the RPC contract.
 
 The UI uses React Native primitives only, so it also works in the Paseo mobile app.
@@ -127,6 +157,7 @@ The UI uses React Native primitives only, so it also works in the Paseo mobile a
 ## Roadmap
 
 - Optional: add a naming and labelling instruction to new agents, so leads label themselves automatically.
+- A lead-lookup tool for agents that follows handoffs, instead of the system-prompt line.
 - Use Paseo's own sub-agent list once plugins can reach it.
 - Open agents straight from the sidebar once the SDK allows it.
 
