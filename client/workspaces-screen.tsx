@@ -1,7 +1,8 @@
-import { usePaseo, type PluginScreenProps } from "@getpaseo/plugin/client";
+import { usePaseo, useRpc, type PluginScreenProps } from "@getpaseo/plugin/client";
 import { copyText, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/ui";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
+import { checkWorkspaceMergesRpc } from "../shared/workspaces";
 import { makeStyles, Toggle, type Styles } from "./board";
 import { useBoardConfig } from "./config";
 import { relativeTime } from "./model";
@@ -67,6 +68,7 @@ function WorkspaceRowView({
   onArchive(row: WorkspaceRow): Promise<void>;
 }) {
   const { workspace, verdict } = row;
+  const isMerged = workspace.merged || workspace.pr?.merged === true;
   const details = [
     workspace.project,
     `active ${relativeTime(workspace.activityAt ?? workspace.createdAt, now)}`,
@@ -93,12 +95,14 @@ function WorkspaceRowView({
             {workspace.branch && workspace.branch !== workspace.name ? <Chip theme={theme} label={workspace.branch} /> : null}
             {workspace.pinned ? <Chip theme={theme} label="pinned" tone="accent" /> : null}
             {workspace.dirty ? <Chip theme={theme} label="uncommitted" tone="danger" /> : null}
-            {workspace.ahead ? <Chip theme={theme} label={`${workspace.ahead} ahead`} tone="warning" /> : null}
-            {workspace.pr ? (
+            {workspace.ahead && !isMerged ? <Chip theme={theme} label={`${workspace.ahead} ahead`} tone="warning" /> : null}
+            {isMerged ? (
+              <Chip theme={theme} label={workspace.pr?.number ? `PR #${workspace.pr.number} merged` : "merged"} tone="accent" />
+            ) : workspace.pr ? (
               <Chip
                 theme={theme}
-                label={`PR${workspace.pr.number ? ` #${workspace.pr.number}` : ""} ${workspace.pr.merged ? "merged" : workspace.pr.state.toLowerCase()}`}
-                tone={workspace.pr.merged ? "accent" : "muted"}
+                label={`PR${workspace.pr.number ? ` #${workspace.pr.number}` : ""} ${workspace.pr.state.toLowerCase()}`}
+                tone="muted"
               />
             ) : null}
           </View>
@@ -133,10 +137,37 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
   const board = useBoard();
   const state = useWorkspaces();
   const now = useNow();
+  const checkMerges = useRpc(checkWorkspaceMergesRpc);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<WorkspaceSort>("cleanup");
   const [filter, setFilter] = useState<Filter>("all");
   const [byProject, setByProject] = useState(false);
+
+  const worktreeKey = useMemo(
+    () =>
+      JSON.stringify(
+        [...state.workspaces.values()]
+          .filter((workspace) => workspace.kind === "worktree")
+          .map((workspace) => ({ id: workspace.id, directory: workspace.directory, branch: workspace.branch })),
+      ),
+    [state.workspaces],
+  );
+  useEffect(() => {
+    if (state.status !== "ready") return;
+    const workspaces = JSON.parse(worktreeKey) as { id: string; directory: string; branch: string | null }[];
+    if (workspaces.length === 0) return;
+    let cancelled = false;
+    checkMerges({ workspaces }).then(
+      (res) => {
+        if (!cancelled) workspaceStore.applyMerges(res.merges);
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status, worktreeKey]);
 
   const rows = useMemo(() => {
     const agents = agentsByWorkspace(state.workspaces.values(), [...board.agents.values()]);
