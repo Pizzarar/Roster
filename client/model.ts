@@ -1,6 +1,7 @@
 import {
   isLeadAgent,
   isRetiredTitle,
+  leadAreaFromTitle,
   isHandSnoozed,
   isLeadAwaitingAub,
   pairLeadsWithBrainstorms,
@@ -78,13 +79,7 @@ export function sidebarTitle(agent: BoardAgent, cfg: BoardConfig): string {
 }
 
 export function leadArea(lead: BoardAgent, cfg: BoardConfig): string {
-  const title = sidebarTitle(lead, cfg);
-  const stripped = title
-    .replace(/^★?\s*LEAD\s*[·:-]?\s*/i, "")
-    .replace(/\s*\([^)]*\)\s*$/g, "")
-    .replace(/\s+\bord\d+\b.*$/i, "")
-    .trim();
-  return stripped || basename(lead.cwd);
+  return leadAreaFromTitle(displayTitle(lead), lead.cwd, cfg);
 }
 
 /** Display/ordering time only (never used to decide whether a flag is answered). */

@@ -6,6 +6,7 @@ import {
   AGENT_PAGE_LIMIT,
   isBrainstormAgent,
   isLeadAgent,
+  leadAreaFromTitle,
   isWaitingOnAub,
   clearHandLabels,
   handMatches,
@@ -26,6 +27,8 @@ import {
   type ExpectedHand,
 } from "../shared/config";
 
+export { leadAreaFromTitle };
+
 export type PaseoApi = Parameters<Parameters<PluginServerContext["handle"]>[1]>[1]["paseo"];
 type ProviderId = Parameters<PaseoApi["providers"]["listModes"]>[0];
 type AgentCreateConfig = Parameters<PaseoApi["agents"]["create"]>[0]["config"];
@@ -39,18 +42,6 @@ function messageOf(error: unknown): string {
 function basename(path: string): string {
   const parts = path.split(/[\\/]+/).filter(Boolean);
   return parts[parts.length - 1] ?? path;
-}
-
-export function leadAreaFromTitle(title: string | null | undefined, cwd: string, cfg: BoardConfig): string {
-  const raw = title?.trim() || "";
-  const stripped = (cfg.sidebarStrip ? raw.replace(cfg.sidebarStrip, "") : raw)
-    .replace(/\([^)]*\)/g, " ")
-    .replace(/\bord\d+\b/gi, " ")
-    .trim()
-    .replace(/^★?\s*LEAD\s*[·:-]?\s*/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return stripped || basename(cwd);
 }
 
 export async function renameBrainstorm({ agentId, title, leadKey }: RpcInput<typeof renameBrainstormRpc>) {
@@ -81,21 +72,22 @@ const UNLISTED_GRACE_MS = 2 * 60_000;
 
 type CreateResult = { ok: boolean; reused: boolean; message: string; agentId?: string };
 
-const projectKey = (cwd: string, root?: string) => normalizePath(root?.trim() || cwd);
+/** Every location a caller may name this project by; callers mix passing and omitting the root. */
+const projectKeys = (cwd: string, root?: string) => [...new Set([normalizePath(cwd), root?.trim() ? normalizePath(root) : ""].filter(Boolean))];
 
 export async function createBrainstorm(
   input: RpcInput<typeof createBrainstormRpc>,
   paseo: PaseoApi,
   cfg: BoardConfig,
 ): Promise<CreateResult> {
-  const key = projectKey(input.cwd, input.projectRootPath);
-  const previous = createLocks.get(key) ?? Promise.resolve();
-  const run = previous.catch(() => undefined).then(() => createBrainstormLocked(input, paseo, cfg));
-  createLocks.set(key, run);
+  const keys = projectKeys(input.cwd, input.projectRootPath);
+  const previous = keys.map((k) => (createLocks.get(k) ?? Promise.resolve()).catch(() => undefined));
+  const run = Promise.all(previous).then(() => createBrainstormLocked(input, paseo, cfg));
+  for (const k of keys) createLocks.set(k, run);
   try {
     return await run;
   } finally {
-    if (createLocks.get(key) === run) createLocks.delete(key);
+    for (const k of keys) if (createLocks.get(k) === run) createLocks.delete(k);
   }
 }
 
@@ -250,10 +242,9 @@ ${ROSTER_PROMPT_MARKER}`)
 
   // A brainstorm made moments ago may not be listed or titled yet; the same project reuses it.
   const now = Date.now();
-  const recentKey = projectKey(cwd, projectRootPath);
-  const recentKeys = [cwdNorm, rootNorm].filter(Boolean);
+  const recentKeys = projectKeys(cwd, projectRootPath);
   for (const [k, r] of recentCreates) if (now - r.at > RECENT_BRAINSTORM_MS) recentCreates.delete(k);
-  const recentHit = recentCreates.get(recentKey)?.slug === slug ? recentCreates.get(recentKey) : undefined;
+  const recentHit = recentKeys.map((k) => recentCreates.get(k)).find((r) => r?.slug === slug);
   if (recentHit) {
     const listedHit = allAgents.find((a) => a.id === recentHit.agentId);
     const alive = listedHit ? !listedHit.archivedAt && listedHit.status !== "closed" : now - recentHit.at < UNLISTED_GRACE_MS;
@@ -275,7 +266,7 @@ ${ROSTER_PROMPT_MARKER}`)
     config,
     prompt,
   });
-  recentCreates.set(recentKey, { agentId: handle.id, slug, title, at: Date.now() });
+  for (const k of recentKeys) recentCreates.set(k, { agentId: handle.id, slug, title, at: Date.now() });
   return {
     ok: true,
     reused: false,
@@ -437,6 +428,8 @@ export class NeedsAubWatcher {
               p,
               cfg,
             );
+            // Nothing was created or reused: leave the flag unhandled so the next tick retries.
+            if (!routed.ok) continue;
             // Routing sends a prompt into the brainstorm, which bumps its lastUserMessageAt. Stamp after
             // that, and no earlier than the brainstorm's own latest user message, so only a later message clears.
             const flaggedAt = new Date(await routedBaselineMs(p, routed.agentId)).toISOString();

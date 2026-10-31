@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { resolveLead } from "../shared/match.ts";
-import { isLeadAgent, wasLeadAgent, DEFAULT_CONFIG } from "../shared/config.ts";
-import { createBrainstorm, leadAreaFromTitle, type PaseoApi } from "../server/brainstorm.ts";
+import { isLeadAgent, wasLeadAgent, leadAreaFromTitle, DEFAULT_CONFIG } from "../shared/config.ts";
+import { createBrainstorm, NeedsAubWatcher, type PaseoApi } from "../server/brainstorm.ts";
 
 const cfg = DEFAULT_CONFIG;
 const CWD = "C:/wt/plugins";
@@ -37,6 +37,38 @@ function fakePaseo(agents: A[]) {
 }
 
 const tests: [string, () => Promise<void> | void][] = [
+  ["client leadArea and server area agree on a real title (default sidebarStrip)", async () => {
+    const { leadArea } = await import("../client/model.ts");
+    const lead = { ...OLD, lastUserMessageAt: null } as unknown as Parameters<typeof leadArea>[0];
+    assert.equal(leadArea(lead, cfg), "PLUGINS");
+    assert.equal(leadArea(lead, cfg), leadAreaFromTitle(OLD.title, OLD.cwd, cfg));
+  }],
+  ["watcher leaves the flag alone when the brainstorm could not be created", async () => {
+    const flagged = agent("lead1", "★ LEAD · FLAG", "2026-10-31T10:00:00Z", { labels: { role: "lead", "needs-aub": "need a call" } });
+    const { paseo, created } = fakePaseo([flagged]);
+    let calls = 0;
+    const list = paseo.agents.list.bind(paseo.agents);
+    // checkNow and the stillFlagged check list first; createBrainstorm's own listing then fails.
+    (paseo.agents as unknown as { list: typeof list }).list = (async (...a: Parameters<typeof list>) => {
+      if (++calls >= 3) throw new Error("down");
+      return list(...a);
+    }) as typeof list;
+    const watcher = new NeedsAubWatcher(() => cfg);
+    await watcher.checkNow(paseo);
+    assert.equal(created.length, 0);
+    assert.equal((watcher as unknown as { routed: Map<string, unknown> }).routed.size, 0);
+  }],
+  ["mixed callers (cwd only, then cwd + root) share the lock and the recent create", async () => {
+    const { paseo, created } = fakePaseo([NEW, OLD]);
+    const first = { area: "PLUGINS", cwd: "C:/wt/mixed-root", reuseExisting: true };
+    const second = { area: "PLUGINS", cwd: "C:/wt/mixed-root/sub", projectRootPath: "C:/wt/mixed-root", reuseExisting: true };
+    const [a, b] = await Promise.all([createBrainstorm(first, paseo, cfg), createBrainstorm(second, paseo, cfg)]);
+    assert.equal(created.length, 1);
+    assert.equal(a.agentId, b.agentId);
+    const c = await createBrainstorm({ ...first, cwd: "C:/wt/mixed-root" }, paseo, cfg);
+    assert.equal(c.agentId, a.agentId);
+    assert.equal(created.length, 1);
+  }],
   ["a stale lead id resolves to the newest live lead of the project", () => {
     assert.equal(resolveLead("ord6", [OLD, NEW], where, rules)?.id, "ord7");
   }],

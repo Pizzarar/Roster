@@ -192,6 +192,22 @@ export function wasLeadAgent(
   return role !== undefined && cfg.oldLeadRoles.includes(role);
 }
 
+/**
+ * The project a lead title names: "★ LEAD · PLUGINS (Claude) ord6" -> "PLUGINS". Every parenthetical and
+ * the ordN token go, wherever they sit. Falls back to the folder name. Server and client must agree on this.
+ */
+export function leadAreaFromTitle(title: string | null | undefined, cwd: string, cfg: BoardConfig): string {
+  const raw = title?.trim() || "";
+  const stripped = (cfg.sidebarStrip ? raw.replace(cfg.sidebarStrip, "") : raw)
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\bord\d+\b/gi, " ")
+    .trim()
+    .replace(/^★?\s*LEAD\s*[·:-]?\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return stripped || cwd.split(/[\\/]+/).filter(Boolean).pop() || cwd;
+}
+
 /** Whether an agent is a brainstorm: a brainstorm role, else a brainstorm title. Leads and retired titles never count. */
 export function isBrainstormAgent(
   title: string | null | undefined,
