@@ -92,6 +92,14 @@ const tests: [string, () => void][] = [
     assert.equal(applyPlan(all(), diffProfiles(all(), []), new Set(), newId), null);
     assert.equal(applyPlan(all(), diffProfiles(all(), []), new Set(["agent_profile_a"]), newId)!.length, 2);
   }],
+  ["a new profile drops blank optional fields instead of storing empty strings", () => {
+    const md = ["### Scout - New", "provider: claude", "model:", 'modeId: ""', "notes:", "```", "```", "icon: eye", ""].join("\n");
+    const plan = diffProfiles(all(), parseProfiles(md).profiles);
+    assert.deepEqual(plan.errors, []);
+    assert.deepStrictEqual(plan.created, [{ name: "Scout - New", provider: "claude", icon: "eye" }]);
+    const out = applyPlan(all(), plan, new Set(), newId)!;
+    assert.deepStrictEqual(out[3], { name: "Scout - New", provider: "claude", icon: "eye", id: "agent_profile_new" });
+  }],
   ["a new profile needs a provider", () => {
     const plan = diffProfiles(all(), parseProfiles("### Scout - New\nmodel: m\n").profiles);
     assert.match(plan.errors[0]!, /needs a provider/);

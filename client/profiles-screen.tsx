@@ -119,9 +119,13 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
     }
   };
 
-  const openExport = () => {
+  const openExport = async () => {
     try {
-      const all = groupByPrefix(profiles as readonly Entry[], (p) => String(p.name ?? ""), cfg.groupOrder);
+      // Re-read so the export is the config as it is now, not the list loaded when the screen opened.
+      const fresh = readProfiles<AgentProfile>((await paseo.config.get()).config);
+      setProfiles(fresh.profiles);
+      setLocation(fresh.location);
+      const all = groupByPrefix(fresh.profiles as readonly Entry[], (p) => String(p.name ?? ""), cfg.groupOrder);
       setExportText(serializeProfiles(all));
       setBulk("export");
     } catch (error) {
@@ -202,7 +206,7 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
       <TextInput value={query} onChangeText={setQuery} placeholder="Search name, provider, model, mode" style={styles.input} />
       {writable ? (
         <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-          {button("Export as markdown", openExport, bulk === "export" ? "accent" : "muted")}
+          {button("Export as markdown", () => void openExport(), bulk === "export" ? "accent" : "muted")}
           {button("Import from markdown", () => setBulk(bulk === "import" ? null : "import"), bulk === "import" ? "accent" : "muted")}
         </View>
       ) : null}

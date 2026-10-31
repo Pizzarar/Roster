@@ -216,7 +216,8 @@ export function diffProfiles(current: readonly Entry[], parsed: readonly Entry[]
         errors.push(`new profile "${name}" needs a provider`);
         continue;
       }
-      created.push(entry);
+      // A blank optional field on a new profile means "not set": leave it out.
+      created.push(Object.fromEntries(Object.entries(entry).filter(([key, value]) => !(value === "" && REMOVABLE_TEXT.includes(key)))));
       continue;
     }
     const id = target.id as string;
