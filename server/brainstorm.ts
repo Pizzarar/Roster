@@ -1,7 +1,7 @@
 import type { RpcInput } from "@getpaseo/plugin";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { labelArg, runPaseo } from "./paseo-cli";
-import { checkInLeadsRpc, resolveProviderAutoMode, type createBrainstormRpc, type renameBrainstormRpc } from "../shared/brainstorm";
+import { resolveProviderAutoMode, type createBrainstormRpc, type renameBrainstormRpc } from "../shared/brainstorm";
 import {
   AGENT_PAGE_LIMIT,
   isBrainstormAgent,
@@ -20,7 +20,7 @@ import {
   type BoardConfig,
 } from "../shared/config";
 
-type PaseoApi = Parameters<Parameters<PluginServerContext["handle"]>[1]>[1]["paseo"];
+export type PaseoApi = Parameters<Parameters<PluginServerContext["handle"]>[1]>[1]["paseo"];
 type ProviderId = Parameters<PaseoApi["providers"]["listModes"]>[0];
 type AgentCreateConfig = Parameters<PaseoApi["agents"]["create"]>[0]["config"];
 
@@ -35,7 +35,7 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
-function leadAreaFromTitle(title: string | null | undefined, cwd: string, cfg: BoardConfig): string {
+export function leadAreaFromTitle(title: string | null | undefined, cwd: string, cfg: BoardConfig): string {
   const raw = title?.trim() || "";
   const stripped = (cfg.sidebarStrip ? raw.replace(cfg.sidebarStrip, "") : raw)
     .replace(/^★?\s*LEAD\s*[·:-]?\s*/i, "")
@@ -245,45 +245,6 @@ export async function updateAgentLabels(agentId: string, labels: Readonly<Record
     console.error(`label update for ${agentId} failed: ${messageOf(error)}`);
     return false;
   }
-}
-
-export async function checkInLeads(paseo: PaseoApi, cfg: BoardConfig) {
-  const listed = await paseo.agents
-    .list({
-      includeBackground: true,
-      filter: { includeBackground: true },
-      page: { limit: AGENT_PAGE_LIMIT },
-    })
-    .catch(() => null);
-  const live = (listed?.entries ?? [])
-    .map((e) => e.agent)
-    .filter((a) => !a.archivedAt && a.status !== "closed");
-  const brainstorms = live.filter((a) => isBrainstormAgent(a.title, a.labels ?? {}, cfg));
-  const allLeads = live.filter((a) => isLeadAgent(a.title, a.labels ?? {}, cfg));
-  const idleLeads = allLeads.filter((a) => a.status === "idle");
-  const { pairs } = pairLeadsWithBrainstorms(allLeads, brainstorms, cfg);
-
-  let prompted = 0;
-  for (const lead of idleLeads) {
-    if (!pairs.get(lead.id)) {
-      try {
-        await paseo.agents
-          .ref(lead.id)
-          .send("Anything for Aub? If yes, set the needs-aub label with a reason; if no, reply 'nothing'.");
-        prompted++;
-      } catch {
-        // ignore send error
-      }
-    }
-  }
-  return {
-    ok: true,
-    count: prompted,
-    message:
-      prompted > 0
-        ? `Checked in with ${prompted} idle lead${prompted === 1 ? "" : "s"}`
-        : "No idle leads without a brainstorm",
-  };
 }
 
 async function routedBaselineMs(paseo: PaseoApi, brainstormId: string | undefined): Promise<number> {

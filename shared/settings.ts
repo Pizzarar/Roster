@@ -102,6 +102,10 @@ export const rosterSettings = defineSettings({
     autoArchiveIntervalHours: z.string().trim().default("6"),
     autoArchiveAgentDays: z.string().trim().default("3"),
     autoArchiveWorkspaceDays: z.string().trim().default("3"),
+    /** A lead silent this many minutes shows "quiet Nm" in the sidebar; a running one this long can be checked in. */
+    checkInQuietMinutes: z.string().trim().default("20"),
+    /** A lead checked in within this many minutes is not pinged again. */
+    checkInCooldownMinutes: z.string().trim().default("15"),
     brainstormPreset: z.boolean().default(true),
     /** Profile id or name for new brainstorms; empty picks the first "brainstorm" profile. */
     brainstormProfile: z.string().default(""),

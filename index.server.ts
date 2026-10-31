@@ -1,6 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { AutoArchiver } from "./server/auto-archive";
-import { checkInLeads, createBrainstorm, NeedsAubWatcher, renameBrainstorm } from "./server/brainstorm";
+import { CheckIns } from "./server/check-in";
+import { createBrainstorm, NeedsAubWatcher, renameBrainstorm } from "./server/brainstorm";
 import { Handoffs } from "./server/handoff";
 import { stopAgent } from "./server/stop";
 import { checkWorkspaceMerges } from "./server/workspaces";
@@ -21,11 +22,12 @@ export default function contribute(server: PluginServerContext) {
   const stopSettings = handoffs.start();
   const autoArchiver = new AutoArchiver(() => handoffs.config);
   const stopAutoArchive = autoArchiver.start();
+  const checkIns = new CheckIns(() => handoffs.config);
   const needsAubWatcher = new NeedsAubWatcher(() => handoffs.config);
   const stopNeedsAub = needsAubWatcher.start();
 
   server.handle(stopAgentRpc, stopAgent);
-  server.handle(checkInLeadsRpc, (_input, { paseo }) => checkInLeads(paseo, handoffs.config));
+  server.handle(checkInLeadsRpc, ({ leadId }, { paseo }) => checkIns.run(paseo, leadId));
   server.handle(autoArchiveStateRpc, (_input, { paseo }) => {
     autoArchiver.bind(paseo);
     return autoArchiver.snapshot();
@@ -84,8 +86,12 @@ export default function contribute(server: PluginServerContext) {
     needsAubWatcher.bind(paseo);
     return handoffs.onTurnStarted(agent, paseo);
   });
-  server.on("agent.archived", ({ agent }) => handoffs.onArchived(agent));
+  server.on("agent.archived", ({ agent }) => {
+    checkIns.onArchived(agent);
+    return handoffs.onArchived(agent);
+  });
   server.on("agent.turn_ended", ({ agent, outcome }, { paseo }) => {
+    void checkIns.onTurnEnded(agent, outcome, paseo);
     needsAubWatcher.bind(paseo);
     void needsAubWatcher.checkNow(paseo);
     return handoffs.relayTurnEnded(agent, outcome, paseo).catch((error) => console.error(`relay failed: ${error}`));

@@ -23,6 +23,7 @@ export interface BoardAgent {
   readonly workspaceId?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly lastActivityAt?: string;
   readonly lastUserMessageAt: string | null;
   readonly requiresAttention?: boolean;
   readonly attentionReason?: "finished" | "error" | "permission" | null;

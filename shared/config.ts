@@ -1,5 +1,6 @@
 import { rosterSettings, type GuidanceRule, type RosterSettings, type Tracker, type TrackerKind } from "./settings";
 import { normalizePath } from "./match";
+import { minutesError } from "./check-in";
 
 /** Sub-agent counting: poll the timeline tail of running agents while visible. */
 export const SUBAGENT_POLL_MS = 30_000;
@@ -51,6 +52,8 @@ export interface BoardConfig {
   readonly autoArchiveIntervalMs: number;
   readonly autoArchiveAgentMs: number;
   readonly autoArchiveWorkspaceMs: number;
+  readonly checkInQuietMs: number;
+  readonly checkInCooldownMs: number;
   readonly brainstormPreset: boolean;
   readonly brainstormProfile: string;
   readonly brainstormModeId: string;
@@ -190,6 +193,7 @@ export function isBrainstormAgent(
 
 export * from "./match";
 export * from "./needs-aub";
+export * from "./check-in";
 
 export function compileConfig(values: RosterSettings): BoardConfig {
   const hasBrainstorm = values.brainstormPreset;
@@ -223,6 +227,8 @@ export function compileConfig(values: RosterSettings): BoardConfig {
     autoArchiveIntervalMs: (hoursError(values.autoArchiveIntervalHours) ? 6 : Number(values.autoArchiveIntervalHours)) * 3_600_000,
     autoArchiveAgentMs: (daysError(values.autoArchiveAgentDays) ? 3 : Number(values.autoArchiveAgentDays)) * DAY_MS,
     autoArchiveWorkspaceMs: (daysError(values.autoArchiveWorkspaceDays) ? 3 : Number(values.autoArchiveWorkspaceDays)) * DAY_MS,
+    checkInQuietMs: (minutesError(values.checkInQuietMinutes) ? 20 : Number(values.checkInQuietMinutes)) * 60_000,
+    checkInCooldownMs: (minutesError(values.checkInCooldownMinutes) ? 15 : Number(values.checkInCooldownMinutes)) * 60_000,
     brainstormPreset: hasBrainstorm,
     brainstormProfile: values.brainstormProfile.trim(),
     brainstormModeId: values.brainstormModeId.trim() || "auto",
