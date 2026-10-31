@@ -7,7 +7,7 @@ import { checkInLeadsRpc, createBrainstormRpc } from "../shared/brainstorm";
 import { CHECK_IN_DEDUPE_MS, CHECK_IN_REPLY_AT_LABEL, CHECK_IN_REPLY_LABEL } from "../shared/check-in";
 import { checkWorkspaceMergesRpc } from "../shared/workspaces";
 import { makeStyles, Toggle, useAgentProfiles, type Styles } from "./board";
-import { isLeadAwaitingAub, pairLeadsWithBrainstorms, normalizePath, type BoardConfig } from "../shared/config";
+import { isHandSnoozed, isLeadAwaitingAub, pairLeadsWithBrainstorms, normalizePath, type BoardConfig } from "../shared/config";
 import { BrainstormChip, useLeadBrainstorm } from "./brainstorm-link";
 import { useBoardConfig } from "./config";
 import {
@@ -113,7 +113,7 @@ function WorkspaceRowView({
   const { workspace, verdict } = row;
   const isMerged = workspace.merged || workspace.pr?.merged === true;
   const lead = row.agents.some((agent) => agentKind(agent, cfg) === "lead");
-  const waitingOnAub = row.agents.some((agent) => agentKind(agent, cfg) === "lead" && isLeadAwaitingAub(agent));
+  const waitingOnAub = row.agents.some((agent) => agentKind(agent, cfg) === "lead" && isLeadAwaitingAub(agent) && !isHandSnoozed(agent.labels, now));
   const main = lead || workspace.kind !== "worktree";
   const activity = relativeTime(workspace.activityAt ?? workspace.createdAt, now);
   const meta =
@@ -205,9 +205,9 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
   const waitingLeads = useMemo(
     () => {
       const live = [...board.agents.values()].filter((a) => !a.archivedAt && a.status !== "closed");
-      return live.filter((a) => agentKind(a, cfg) === "lead" && isLeadAwaitingAub(a));
+      return live.filter((a) => agentKind(a, cfg) === "lead" && isLeadAwaitingAub(a) && !isHandSnoozed(a.labels, now));
     },
-    [board.agents, cfg],
+    [board.agents, cfg, now],
   );
   // User-configured tracker sections (title/folder/label) used to live in the sidebar.
   const trackerSections = useMemo(() => {
