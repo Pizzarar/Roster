@@ -1,15 +1,14 @@
 import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
-import { Icon, SidebarRow, useToast } from "@getpaseo/plugin/client/ui";
+import { Icon, ScrollView, SidebarRow, useToast } from "@getpaseo/plugin/client/ui";
 import { useMemo, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, useWindowDimensions, View } from "react-native";
 import { useLeadBrainstorm } from "./brainstorm-link";
 import { checkInLeadsRpc, clearHandRpc, snoozeHandRpc } from "../shared/brainstorm";
 import { CLEAR_HAND_DEDUPE_MS } from "../shared/clear-hand";
 import { unhandledNeedsAubReason } from "../shared/needs-aub";
 import { CHECK_IN_DEDUPE_MS, formatQuiet, leadHealth } from "../shared/check-in";
 import { useBoardConfig } from "./config";
-import { liveAgentGroups, useGroupState } from "./groups";
 import {
   agentKind,
   compareAgents,
@@ -20,18 +19,16 @@ import {
   runningWorkersByLead,
   type BoardAgent,
   type ProjectLane,
-  sidebarTitle,
   type RaisedHandItem,
 } from "./model";
 import { BOARD_SCREEN, OPEN_AGENT_SCREEN, PROFILES_SCREEN, WORKSPACES_SCREEN, navigationOf } from "./navigation";
 import { useBoard, useNow } from "./store";
 import { attentionLabel, Chip, dotIcon, ringIcon, statusColor } from "./ui";
 
-/** Most agents shown under one role group before pointing at the Roster screen. */
-const ROLE_GROUP_ROWS = 8;
-
 export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
   const { theme, currentScreen, openScreen } = props;
+  // Bound the panel so a tall list scrolls inside it and the rest of Paseo's sidebar stays reachable.
+  const maxHeight = Math.max(160, Math.min(440, Math.round(useWindowDimensions().height * 0.4)));
   const board = useBoard();
   const cfg = useBoardConfig();
   const now = useNow();
@@ -55,8 +52,6 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
       running: agents.filter((agent) => agent.status === "running").length,
     };
   }, [board.agents, cfg]);
-  const groupState = useGroupState();
-  const roleGroups = useMemo(() => liveAgentGroups(board.agents.values(), cfg), [board.agents, cfg]);
   const queue = useMemo(() => raisedHandsQueue([...board.agents.values()], cfg, now), [board.agents, cfg, now]);
   const workers = useMemo(
     () => runningWorkersByLead([...board.agents.values()], cfg, board.handoffs.relays),
@@ -300,6 +295,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
           tone={board.status === "error" ? "danger" : running > 0 ? "accent" : "muted"}
         />
       </View>
+      <ScrollView style={{ maxHeight }} nestedScrollEnabled>
       {hand ? (
         <View>
           <View style={styles.banner}>
@@ -359,51 +355,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
         </Text>
       </View>
       {lanes.length === 0 ? <Text style={styles.empty}>None active</Text> : lanes.map(laneRow)}
-      {roleGroups.length > 0 ? (
-        <View>
-          <View style={styles.divider} />
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle} numberOfLines={1}>
-              Agents by role
-            </Text>
-          </View>
-          {roleGroups.map((group) => {
-            const open = groupState.isOpen(`sidebar:${group.key}`);
-            return (
-              <View key={group.key}>
-                <SidebarRow
-                  id={`role-${group.key}`}
-                  icon={open ? "ChevronDown" : "ChevronRight"}
-                  label={group.label}
-                  onPress={() => groupState.toggle(`sidebar:${group.key}`)}
-                  trailing={<Chip theme={theme} label={String(group.items.length)} />}
-                />
-                {open
-                  ? group.items.slice(0, ROLE_GROUP_ROWS).map((agent) => (
-                      <SidebarRow
-                        key={agent.id}
-                        id={`role-agent-${agent.id}`}
-                        icon={dotIcon(statusColor(theme, agent.status))}
-                        label={sidebarTitle(agent, cfg)}
-                        active={isOpen(agent)}
-                        onPress={() => openAgentId(agent.id)}
-                      />
-                    ))
-                  : null}
-                {open && group.items.length > ROLE_GROUP_ROWS ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`${group.items.length - ROLE_GROUP_ROWS} more, open Workspaces`}
-                    onPress={() => openScreen({ screenId: WORKSPACES_SCREEN })}
-                  >
-                    <Text style={styles.empty}>{group.items.length - ROLE_GROUP_ROWS} more on the Workspaces screen</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            );
-          })}
-        </View>
-      ) : null}
+      </ScrollView>
       <View style={styles.divider} />
       <SidebarRow
         id="workspaces"

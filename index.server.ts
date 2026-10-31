@@ -1,3 +1,5 @@
+import { backupConfig } from "./server/profiles-backup";
+import { backupConfigRpc } from "./shared/profiles-backup";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { AutoArchiver } from "./server/auto-archive";
 import { CheckIns } from "./server/check-in";
@@ -27,6 +29,7 @@ export default function contribute(server: PluginServerContext) {
   const stopNeedsAub = needsAubWatcher.start();
 
   server.handle(stopAgentRpc, stopAgent);
+  server.handle(backupConfigRpc, backupConfig);
   server.handle(checkInLeadsRpc, ({ leadId }, { paseo }) => checkIns.run(paseo, leadId));
   server.handle(clearHandRpc, ({ leadId, flagAt, reason }, { paseo }) =>
     aubHandAction("clear", leadId, { flagAt, reason }, paseo),
