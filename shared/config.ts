@@ -54,6 +54,8 @@ export interface BoardConfig {
   readonly brainstormProfile: string;
   readonly brainstormModeId: string;
   readonly leadsPreset: boolean;
+  readonly needsAubAutoSpawn: boolean;
+  readonly needsAubPrompt: string;
   readonly brainstormPrompt: string;
   readonly leadPrompt: string;
   readonly leadPointerPrompt: string;
@@ -189,6 +191,24 @@ export function isBrainstormAgent(
   return cfg.brainstormTitle?.test(title ?? "") ?? false;
 }
 
+export const NEEDS_AUB_LABEL = "needs-aub";
+export const NEEDS_AUB_REASON_LABEL = "needs-aub-reason";
+
+/** True when a lead has flagged needs-aub (including after auto-spawn sets needs-aub=handled). */
+export function isWaitingOnAub(labels: Readonly<Record<string, string>> | undefined): boolean {
+  const raw = labels?.[NEEDS_AUB_LABEL]?.trim();
+  if (!raw) return false;
+  return !/^(?:none|false|cleared|0)$/i.test(raw);
+}
+
+/** Non-null when needs-aub has a fresh reason that hasn't been marked handled yet. */
+export function unhandledNeedsAubReason(labels: Readonly<Record<string, string>> | undefined): string | null {
+  const raw = labels?.[NEEDS_AUB_LABEL]?.trim();
+  if (!raw) return null;
+  if (/^(?:handled|none|false|cleared|0)$/i.test(raw)) return null;
+  return raw;
+}
+
 export function compileConfig(values: RosterSettings): BoardConfig {
   const hasBrainstorm = values.brainstormPreset;
   const hasLeads = values.leadsPreset;
@@ -225,6 +245,8 @@ export function compileConfig(values: RosterSettings): BoardConfig {
     brainstormProfile: values.brainstormProfile.trim(),
     brainstormModeId: values.brainstormModeId.trim() || "auto",
     leadsPreset: hasLeads,
+    needsAubAutoSpawn: hasLeads ? values.needsAubAutoSpawn : false,
+    needsAubPrompt: hasLeads ? (values.needsAubPromptEnabled ? values.needsAubPrompt.trim() : "") : "",
     brainstormPrompt: hasBrainstorm ? (values.brainstormPromptEnabled ? values.brainstormPrompt.trim() : "") : "",
     leadPrompt: hasLeads ? (values.leadPromptEnabled ? values.leadPrompt.trim() : "") : "",
     leadPointerPrompt: hasLeads ? (values.leadPointerEnabled ? values.leadPointerPrompt.trim() : "") : "",

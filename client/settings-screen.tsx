@@ -23,6 +23,7 @@ import {
   DEFAULT_BRAINSTORM_PROMPT,
   DEFAULT_LEAD_POINTER,
   DEFAULT_LEAD_PROMPT,
+  DEFAULT_NEEDS_AUB_PROMPT,
   rosterSettings,
   type RosterSettings,
   type Tracker,
@@ -43,6 +44,7 @@ const TEXT_KEYS: readonly TextKey[] = [
   "brainstormRoles",
   "leadPrompt",
   "leadPointerPrompt",
+  "needsAubPrompt",
   "imagePrompt",
   "leadTitlePattern",
   "hideTitlePattern",
@@ -387,6 +389,27 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
               disabled={settings.saving}
             />
             <SettingsSwitch
+              label="Auto-spawn brainstorm when a lead flags needs-aub"
+              hint="Opens or messages the project's brainstorm with the lead's reason, then sets needs-aub=handled."
+              value={settings.values.needsAubAutoSpawn}
+              disabled={settings.saving}
+              onValueChange={toggle("needsAubAutoSpawn")}
+            />
+            <SettingsSwitch
+              label="Tell leads how to flag Aub with needs-aub"
+              hint="Adds the needs-aub instruction below to new agents so leads know how to surface decisions."
+              value={settings.values.needsAubPromptEnabled}
+              disabled={settings.saving}
+              onValueChange={toggle("needsAubPromptEnabled")}
+            />
+            <SettingsInput
+              label="Needs-Aub prompt"
+              hint="System-prompt line added when the switch above is on."
+              initialValue={draft.values.needsAubPrompt}
+              onChangeText={change("needsAubPrompt")}
+              disabled={settings.saving}
+            />
+            <SettingsSwitch
               label="Detach new leads"
               hint="A lead created by another agent is detached at once, so its spawner stops being woken for it."
               value={settings.values.detachNewLeads}
@@ -477,6 +500,7 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
                   oldLeadRoles: draft.values.oldLeadRoles || DEFAULT_SETTINGS.oldLeadRoles,
                   leadPrompt: draft.values.leadPrompt || DEFAULT_LEAD_PROMPT,
                   leadPointerPrompt: draft.values.leadPointerPrompt || DEFAULT_LEAD_POINTER,
+                  needsAubPrompt: draft.values.needsAubPrompt || DEFAULT_NEEDS_AUB_PROMPT,
                   trackers: draft.values.trackers.some((t) => t.kind === "leads")
                     ? draft.values.trackers
                     : [

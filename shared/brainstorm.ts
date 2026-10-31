@@ -28,12 +28,23 @@ export const createBrainstormRpc = defineRpc({
     projectDisplayName: z.string().optional(),
     projectRootPath: z.string().optional(),
     reuseExisting: z.boolean().optional(),
+    reason: z.string().optional(),
   }),
   output: z.object({
     ok: z.boolean(),
     message: z.string(),
     agentId: z.string().optional(),
     reused: z.boolean().optional(),
+  }),
+});
+
+export const checkInLeadsRpc = defineRpc({
+  name: "brainstorm.check-in-leads",
+  input: z.object({}),
+  output: z.object({
+    ok: z.boolean(),
+    count: z.number(),
+    message: z.string(),
   }),
 });
 

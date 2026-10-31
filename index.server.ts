@@ -1,12 +1,12 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { AutoArchiver } from "./server/auto-archive";
-import { createBrainstorm, renameBrainstorm } from "./server/brainstorm";
+import { checkInLeads, createBrainstorm, NeedsAubWatcher, renameBrainstorm } from "./server/brainstorm";
 import { Handoffs } from "./server/handoff";
 import { stopAgent } from "./server/stop";
 import { checkWorkspaceMerges } from "./server/workspaces";
 import { checkWorkspaceMergesRpc } from "./shared/workspaces";
 import { autoArchiveStateRpc, runAutoArchiveRpc, undoAutoArchiveRpc } from "./shared/auto-archive";
-import { createBrainstormRpc, renameBrainstormRpc } from "./shared/brainstorm";
+import { checkInLeadsRpc, createBrainstormRpc, renameBrainstormRpc } from "./shared/brainstorm";
 import { fixChainedLeadsRpc, handoffStateRpc, promoteLeadRpc } from "./shared/handoff";
 import { rosterSettings } from "./shared/settings";
 import { stopAgentRpc } from "./shared/stop";
@@ -21,8 +21,11 @@ export default function contribute(server: PluginServerContext) {
   const stopSettings = handoffs.start();
   const autoArchiver = new AutoArchiver(() => handoffs.config);
   const stopAutoArchive = autoArchiver.start();
+  const needsAubWatcher = new NeedsAubWatcher(() => handoffs.config);
+  const stopNeedsAub = needsAubWatcher.start();
 
   server.handle(stopAgentRpc, stopAgent);
+  server.handle(checkInLeadsRpc, (_input, { paseo }) => checkInLeads(paseo, handoffs.config));
   server.handle(autoArchiveStateRpc, (_input, { paseo }) => {
     autoArchiver.bind(paseo);
     return autoArchiver.snapshot();
@@ -52,6 +55,9 @@ export default function contribute(server: PluginServerContext) {
     if (handoffs.config.leadPrompt) {
       systemPrompt = appendLine(systemPrompt, handoffs.config.leadPrompt);
     }
+    if (handoffs.config.needsAubPrompt) {
+      systemPrompt = appendLine(systemPrompt, handoffs.config.needsAubPrompt);
+    }
     if (handoffs.config.imagePrompt) {
       systemPrompt = appendLine(systemPrompt, handoffs.config.imagePrompt);
     }
@@ -61,23 +67,32 @@ export default function contribute(server: PluginServerContext) {
 
   server.on("agent.created", ({ agent }, { paseo }) => {
     autoArchiver.bind(paseo);
+    needsAubWatcher.bind(paseo);
+    void needsAubWatcher.checkNow(paseo);
     return handoffs.onCreated(agent, paseo);
   });
   server.on("agent.turn_started", ({ agent }, { paseo }) => {
     autoArchiver.bind(paseo);
+    needsAubWatcher.bind(paseo);
+    void needsAubWatcher.onTurnStarted(agent.id, paseo);
     return handoffs.onTurnStarted(agent, paseo);
   });
   server.on("agent.archived", ({ agent }) => handoffs.onArchived(agent));
-  server.on("agent.turn_ended", ({ agent, outcome }, { paseo }) =>
-    handoffs.relayTurnEnded(agent, outcome, paseo).catch((error) => console.error(`relay failed: ${error}`)),
-  );
-  server.on("agent.permission_requested", ({ agent, request }, { paseo }) =>
-    handoffs
+  server.on("agent.turn_ended", ({ agent, outcome }, { paseo }) => {
+    needsAubWatcher.bind(paseo);
+    void needsAubWatcher.checkNow(paseo);
+    return handoffs.relayTurnEnded(agent, outcome, paseo).catch((error) => console.error(`relay failed: ${error}`));
+  });
+  server.on("agent.permission_requested", ({ agent, request }, { paseo }) => {
+    needsAubWatcher.bind(paseo);
+    void needsAubWatcher.checkNow(paseo);
+    return handoffs
       .relayPermission(agent, request.title ?? request.name, paseo)
-      .catch((error) => console.error(`relay failed: ${error}`)),
-  );
+      .catch((error) => console.error(`relay failed: ${error}`));
+  });
 
   return async () => {
+    stopNeedsAub();
     stopAutoArchive();
     (await stopSettings.catch(() => undefined))?.();
   };

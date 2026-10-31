@@ -3,10 +3,10 @@ import { copyText, ScrollView, TextInput, useToast } from "@getpaseo/plugin/clie
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { autoArchiveStateRpc, runAutoArchiveRpc, undoAutoArchiveRpc, type AutoArchiveState } from "../shared/auto-archive";
-import { createBrainstormRpc } from "../shared/brainstorm";
+import { checkInLeadsRpc, createBrainstormRpc } from "../shared/brainstorm";
 import { checkWorkspaceMergesRpc } from "../shared/workspaces";
 import { makeStyles, Toggle, useAgentProfiles, type Styles } from "./board";
-import { normalizePath, type BoardConfig } from "../shared/config";
+import { isWaitingOnAub, normalizePath, type BoardConfig } from "../shared/config";
 import { useBoardConfig } from "./config";
 import { agentKind, basename, displayTitle, leadArea, relativeTime, sidebarTitle, type BoardAgent } from "./model";
 import { useBoard, useNow } from "./store";
@@ -96,6 +96,7 @@ function WorkspaceRowView({
   const { workspace, verdict } = row;
   const isMerged = workspace.merged || workspace.pr?.merged === true;
   const lead = row.agents.some((agent) => agentKind(agent, cfg) === "lead");
+  const waitingOnAub = row.agents.some((agent) => agentKind(agent, cfg) === "lead" && isWaitingOnAub(agent.labels));
   const main = lead || workspace.kind !== "worktree";
   const activity = relativeTime(workspace.activityAt ?? workspace.createdAt, now);
   const meta =
@@ -122,6 +123,7 @@ function WorkspaceRowView({
             {workspace.name}
           </Text>
           {lead ? <Chip theme={theme} label="★ lead" tone="accent" /> : null}
+          {waitingOnAub ? <Chip theme={theme} label="🙋 waiting on you" tone="warning" /> : null}
           {workspace.kind !== "worktree" ? <Chip theme={theme} label={workspace.kind.replace("_", " ")} /> : null}
           {workspace.pinned ? <Chip theme={theme} label="pinned" tone="accent" /> : null}
           {workspace.dirty ? <Chip theme={theme} label="uncommitted" tone="danger" /> : null}
@@ -177,6 +179,15 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
   const state = useWorkspaces();
   const now = useNow();
   const checkMerges = useRpc(checkWorkspaceMergesRpc);
+  const checkInLeads = useRpc(checkInLeadsRpc);
+  const [checkingIn, setCheckingIn] = useState(false);
+  const waitingLeads = useMemo(
+    () =>
+      [...board.agents.values()].filter(
+        (a) => !a.archivedAt && a.status !== "closed" && agentKind(a, cfg) === "lead" && isWaitingOnAub(a.labels),
+      ),
+    [board.agents, cfg],
+  );
   const fetchAutoState = useRpc(autoArchiveStateRpc);
   const runAutoArchive = useRpc(runAutoArchiveRpc);
   const undoAutoArchive = useRpc(undoAutoArchiveRpc);
@@ -448,7 +459,7 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
         <Text style={styles.title}>Workspaces</Text>
         <Text style={styles.muted}>
           {state.status === "ready"
-            ? `${rows.length} workspaces · ${counts.candidate} safe to clean · ${counts.keep} to check · ${counts.blocked} in use`
+            ? `${rows.length} workspaces · ${counts.candidate} safe to clean · ${counts.keep} to check · ${counts.blocked} in use${cfg.leadsPreset ? ` · 🙋 Waiting on you (${waitingLeads.length})` : ""}`
             : state.status === "error"
               ? `Could not load workspaces: ${state.error ?? "unknown error"}`
               : "Loading workspaces…"}
@@ -473,6 +484,28 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
         <View style={styles.group}>
           <View style={[styles.row, { flexWrap: "wrap", justifyContent: "space-between" }]}>
             <Text style={[styles.text, { fontWeight: "600" }]}>Brainstorm</Text>
+            {waitingLeads.length > 0 ? (
+              <Chip theme={theme} label={`🙋 Waiting on you (${waitingLeads.length})`} tone="warning" />
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              disabled={checkingIn}
+              onPress={async () => {
+                setCheckingIn(true);
+                try {
+                  const res = await checkInLeads({});
+                  if (res.ok) toast.show(res.message);
+                  else toast.error(res.message);
+                } catch (error) {
+                  toast.error(`Check-in failed: ${error instanceof Error ? error.message : String(error)}`);
+                } finally {
+                  setCheckingIn(false);
+                }
+              }}
+              style={[styles.smallButton, checkingIn && { opacity: 0.6 }]}
+            >
+              <Text style={styles.text}>{checkingIn ? "Checking in…" : "Check in"}</Text>
+            </Pressable>
             <Pressable
               accessibilityRole="button"
               onPress={() => setShowProjectPicker((v) => !v)}
