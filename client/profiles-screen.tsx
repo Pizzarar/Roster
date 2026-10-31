@@ -8,10 +8,12 @@ import {
   canWriteProfiles,
   groupByPrefix,
   readProfiles,
+  sameOrder,
+  sortProfiles,
   type ProfileEdit,
   type ProfileLocation,
 } from "../shared/config";
-import { backupConfigRpc } from "../shared/profiles-backup";
+import { writeProfilesRpc } from "../shared/profile-write";
 import {
   applyPlan,
   diffProfiles,
@@ -54,7 +56,10 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
   const [base, setBase] = useState<ProfileEdit>({});
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
-  const backup = useRpc(backupConfigRpc);
+  const write = useRpc(writeProfilesRpc);
+  const [sortPreview, setSortPreview] = useState<{ before: string[]; after: string[]; groups: { label: string; names: string[] }[] } | null>(null);
+  const [sorting, setSorting] = useState(false);
+  const [sortChanged, setSortChanged] = useState(false);
   const [bulk, setBulk] = useState<"export" | "import" | null>(null);
   const [exportText, setExportText] = useState("");
   const [pasted, setPasted] = useState("");
@@ -73,9 +78,48 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
       setStatus("error");
     }
   }, [paseo]);
+  // Once per open: the daemon sorts only if its own copy of the keep-sorted setting is ON and the order is off.
   useEffect(() => {
-    void load();
+    void (async () => {
+      try {
+        const res = await write({ kind: "sort", auto: true });
+        if (res.changed) toast.show(res.message);
+      } catch {
+        // Settings not ready or daemon busy: the next open tries again.
+      }
+      await load();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);
+
+  const openSortPreview = async () => {
+    try {
+      const fresh = readProfiles<AgentProfile>((await paseo.config.get()).config);
+      const sorted = sortProfiles(fresh.profiles, cfg.groupOrder);
+      setSortPreview({
+        before: fresh.profiles.map((p) => p.name),
+        after: sorted.map((p) => p.name),
+        groups: groupByPrefix(sorted, (p) => p.name, cfg.groupOrder).map((g) => ({ label: g.label, names: g.items.map((p) => p.name) })),
+      });
+      setSortChanged(!sameOrder(fresh.profiles, sorted));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  };
+  const applySort = async () => {
+    setSorting(true);
+    try {
+      const res = await write({ kind: "sort", auto: false });
+      if (!res.ok) throw new Error(res.message);
+      toast.show(res.message);
+      setSortPreview(null);
+      await load();
+    } catch (error) {
+      toast.error(`Could not sort: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSorting(false);
+    }
+  };
 
   const writable = canWriteProfiles(location);
   const groups = useMemo(() => {
@@ -96,21 +140,12 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
   const save = async (id: string) => {
     setSaving(true);
     try {
-      // Re-read first, and write only the fields the user changed, so edits made elsewhere since this screen
-      // loaded (to any field, including ones shown here) are not overwritten. The profile is matched by id.
-      const fresh = readProfiles<AgentProfile>((await paseo.config.get()).config);
-      if (!canWriteProfiles(fresh.location)) throw new Error("Profiles live under daemon.agentProfiles; edit them in Paseo settings.");
-      const next = applyProfileEdit(fresh.profiles, id, changedFields(base, draft));
-      if (next) {
-        const res = await paseo.config.patch({ agentProfiles: next as AgentProfile[] });
-        const saved = readProfiles<AgentProfile>(res.config);
-        setProfiles(saved.profiles);
-        setLocation(saved.location);
-        toast.show("Profile saved");
-      } else {
-        setProfiles(fresh.profiles);
-        toast.show("No changes");
-      }
+      // The daemon re-reads the config and applies only the fields the user changed (matched by id), so edits made
+      // elsewhere since this screen loaded are not overwritten; it also re-sorts when that setting is on.
+      const res = await write({ kind: "edit", id, fields: changedFields(base, draft) });
+      if (!res.ok) throw new Error(res.message);
+      toast.show(res.changed ? "Profile saved" : "No changes");
+      await load();
       setEditing(null);
     } catch (error) {
       toast.error(`Could not save: ${error instanceof Error ? error.message : String(error)}`);
@@ -158,23 +193,12 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
     if (!plan || plan.errors.length > 0) return;
     setApplying(true);
     try {
-      const fresh = readProfiles<AgentProfile>((await paseo.config.get()).config);
-      if (!canWriteProfiles(fresh.location)) {
-        throw new Error("Profiles live under daemon.agentProfiles and cannot be written from here.");
-      }
-      const next = applyPlan(fresh.profiles as readonly Entry[], plan, deleteIds, () => makeProfileId(Date.now(), Math.random));
-      if (next) {
-        // Back up config.json first; a failed backup stops the write.
-        const saved = await backup({});
-        if (!saved.ok) throw new Error(saved.message);
-        const res = await paseo.config.patch({ agentProfiles: next as AgentProfile[] });
-        const read = readProfiles<AgentProfile>(res.config);
-        setProfiles(read.profiles);
-        setLocation(read.location);
-        toast.show(`Profiles updated. ${saved.message}`);
-      } else {
-        toast.show("No changes");
-      }
+      // One daemon-side write of exactly the previewed plan (refused if the profiles changed since Preview), sorted
+      // if the setting is on, one backup, one patch.
+      const res = await write({ kind: "import", plan: { changes: plan.changes, created: plan.created }, deleteIds: [...deleteIds] });
+      if (!res.ok) throw new Error(res.message);
+      toast.show(res.changed ? `Profiles updated. ${res.message}` : "No changes");
+      await load();
       setPlan(null);
       setPasted("");
       setBulk(null);
@@ -208,6 +232,27 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
         <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
           {button("Export as markdown", () => void openExport(), bulk === "export" ? "accent" : "muted")}
           {button("Import from markdown", () => setBulk(bulk === "import" ? null : "import"), bulk === "import" ? "accent" : "muted")}
+          {button("Sort Paseo's profile list", () => void openSortPreview(), sortPreview ? "accent" : "muted")}
+        </View>
+      ) : null}
+      {sortPreview ? (
+        <View style={[styles.group, { padding: 12, gap: 8 }]}>
+          <Text style={styles.muted}>
+            Paseo's New chat picker lists profiles in this order. {sortChanged ? "Apply reorders them (config backup first); nothing else changes." : "Already sorted: nothing to change."}
+          </Text>
+          <Text style={[styles.text, { fontWeight: "600" }]}>Current order</Text>
+          <Text style={styles.muted}>{sortPreview.before.map((n, i) => `${i + 1}. ${n}`).join("\n")}</Text>
+          <Text style={[styles.text, { fontWeight: "600" }]}>New order</Text>
+          {sortPreview.groups.map((g) => (
+            <View key={g.label}>
+              <Text style={styles.text}>{g.label}</Text>
+              <Text style={styles.muted}>{g.names.map((n) => `  ${n}`).join("\n")}</Text>
+            </View>
+          ))}
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {button(sorting ? "Applying…" : "Apply", () => void applySort(), "accent", sorting || !sortChanged)}
+            {button("Close", () => setSortPreview(null), "muted", sorting)}
+          </View>
         </View>
       ) : null}
       {bulk === "export" ? (

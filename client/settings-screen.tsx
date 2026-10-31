@@ -573,6 +573,13 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
           disabled={settings.saving}
         />
           <SettingsSwitch
+            label="Keep Paseo's profile list sorted"
+            hint="Reorders agentProfiles in Paseo's config (the New chat picker) by Group order, after profile edits, imports and Group order changes. A config backup is written before each change."
+            value={settings.values.keepProfilesSorted}
+            disabled={settings.saving}
+            onValueChange={toggle("keepProfilesSorted")}
+          />
+          <SettingsSwitch
             label="Group unlabelled agents by folder"
             hint="Otherwise they share one Unassigned group."
             value={settings.values.groupUnassignedByFolder}
