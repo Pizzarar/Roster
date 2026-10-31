@@ -82,6 +82,8 @@ export const rosterSettings = defineSettings({
     brainstormRoles: z.string().default("brainstorm"),
     /** Comma-separated group names, first to last, for prefix grouping; other prefixes follow A-Z, then Other. */
     groupOrder: z.string().default(DEFAULT_GROUP_ORDER),
+    /** Keep Paseo's own profile list (the New chat picker) ordered by group; reorders agentProfiles in config.json. */
+    keepProfilesSorted: z.boolean().default(true),
     groupUnassignedByFolder: z.boolean().default(true),
     showStopButton: z.boolean().default(true),
     countSubagents: z.boolean().default(true),

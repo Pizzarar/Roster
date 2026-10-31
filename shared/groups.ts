@@ -158,3 +158,19 @@ export function agentGroupLabel(agent: AgentGroupInput, order: readonly string[]
     roleWordGroup(namePrefix(title), order)
   );
 }
+
+/**
+ * Orders profiles by group (group order setting, then unknown prefixes A-Z, then Other), keeping the existing
+ * relative order inside a group. Returns the same entry objects; only the order changes.
+ */
+export function sortProfiles<T extends { readonly name?: unknown }>(
+  profiles: readonly T[],
+  order: readonly string[],
+): T[] {
+  return groupByPrefix(profiles, (p) => (typeof p.name === "string" ? p.name : null), order).flatMap((g) => g.items);
+}
+
+/** True when `a` and `b` hold the same objects in the same order. */
+export function sameOrder<T>(a: readonly T[], b: readonly T[]): boolean {
+  return a.length === b.length && a.every((item, i) => item === b[i]);
+}

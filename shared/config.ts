@@ -38,6 +38,7 @@ export interface BoardConfig {
   readonly oldLeadRoles: readonly string[];
   readonly brainstormRoles: readonly string[];
   readonly groupOrder: readonly string[];
+  readonly keepProfilesSorted: boolean;
   readonly groupUnassignedByFolder: boolean;
   readonly showStopButton: boolean;
   readonly countSubagents: boolean;
@@ -218,6 +219,7 @@ export function compileConfig(values: RosterSettings): BoardConfig {
     oldLeadRoles: hasLeads ? list(values.oldLeadRoles) : [],
     brainstormRoles: hasBrainstorm ? list(values.brainstormRoles) : [],
     groupOrder: parseGroupOrder(values.groupOrder),
+    keepProfilesSorted: values.keepProfilesSorted,
     groupUnassignedByFolder: values.groupUnassignedByFolder,
     showStopButton: values.showStopButton,
     countSubagents: values.countSubagents,

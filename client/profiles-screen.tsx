@@ -8,10 +8,13 @@ import {
   canWriteProfiles,
   groupByPrefix,
   readProfiles,
+  sameOrder,
+  sortProfiles,
   type ProfileEdit,
   type ProfileLocation,
 } from "../shared/config";
 import { backupConfigRpc } from "../shared/profiles-backup";
+import { sortProfilesRpc } from "../shared/profile-sort";
 import {
   applyPlan,
   diffProfiles,
@@ -55,6 +58,10 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
   const backup = useRpc(backupConfigRpc);
+  const sortRpc = useRpc(sortProfilesRpc);
+  const [sortPreview, setSortPreview] = useState<{ before: string[]; after: string[]; groups: { label: string; names: string[] }[] } | null>(null);
+  const [sorting, setSorting] = useState(false);
+  const [sortChanged, setSortChanged] = useState(false);
   const [bulk, setBulk] = useState<"export" | "import" | null>(null);
   const [exportText, setExportText] = useState("");
   const [pasted, setPasted] = useState("");
@@ -73,9 +80,54 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
       setStatus("error");
     }
   }, [paseo]);
+  /** With "Keep Paseo's profile list sorted" on, re-sort after a write (or on open); the daemon skips if already sorted. */
+  const keepSorted = useCallback(async () => {
+    if (!cfg.keepProfilesSorted) return;
+    try {
+      const res = await sortRpc({});
+      if (res.changed) toast.show(res.message);
+      else if (!res.ok) toast.error(`Could not sort Paseo's profile list: ${res.message}`);
+    } catch (error) {
+      toast.error(`Could not sort Paseo's profile list: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [cfg.keepProfilesSorted, sortRpc, toast]);
   useEffect(() => {
-    void load();
-  }, [load]);
+    void (async () => {
+      await keepSorted();
+      await load();
+    })();
+    // Runs on open and when the setting or group order changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, cfg.keepProfilesSorted, cfg.groupOrder]);
+
+  const openSortPreview = async () => {
+    try {
+      const fresh = readProfiles<AgentProfile>((await paseo.config.get()).config);
+      const sorted = sortProfiles(fresh.profiles, cfg.groupOrder);
+      setSortPreview({
+        before: fresh.profiles.map((p) => p.name),
+        after: sorted.map((p) => p.name),
+        groups: groupByPrefix(sorted, (p) => p.name, cfg.groupOrder).map((g) => ({ label: g.label, names: g.items.map((p) => p.name) })),
+      });
+      setSortChanged(!sameOrder(fresh.profiles, sorted));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    }
+  };
+  const applySort = async () => {
+    setSorting(true);
+    try {
+      const res = await sortRpc({});
+      if (!res.ok) throw new Error(res.message);
+      toast.show(res.message);
+      setSortPreview(null);
+      await load();
+    } catch (error) {
+      toast.error(`Could not sort: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setSorting(false);
+    }
+  };
 
   const writable = canWriteProfiles(location);
   const groups = useMemo(() => {
@@ -112,6 +164,10 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
         toast.show("No changes");
       }
       setEditing(null);
+      if (next) {
+        await keepSorted();
+        await load();
+      }
     } catch (error) {
       toast.error(`Could not save: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -178,6 +234,10 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
       setPlan(null);
       setPasted("");
       setBulk(null);
+      if (next) {
+        await keepSorted();
+        await load();
+      }
     } catch (error) {
       toast.error(`Could not apply: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -208,6 +268,27 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
         <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
           {button("Export as markdown", () => void openExport(), bulk === "export" ? "accent" : "muted")}
           {button("Import from markdown", () => setBulk(bulk === "import" ? null : "import"), bulk === "import" ? "accent" : "muted")}
+          {button("Sort Paseo's profile list", () => void openSortPreview(), sortPreview ? "accent" : "muted")}
+        </View>
+      ) : null}
+      {sortPreview ? (
+        <View style={[styles.group, { padding: 12, gap: 8 }]}>
+          <Text style={styles.muted}>
+            Paseo's New chat picker lists profiles in this order. {sortChanged ? "Apply reorders them (config backup first); nothing else changes." : "Already sorted: nothing to change."}
+          </Text>
+          <Text style={[styles.text, { fontWeight: "600" }]}>Current order</Text>
+          <Text style={styles.muted}>{sortPreview.before.map((n, i) => `${i + 1}. ${n}`).join("\n")}</Text>
+          <Text style={[styles.text, { fontWeight: "600" }]}>New order</Text>
+          {sortPreview.groups.map((g) => (
+            <View key={g.label}>
+              <Text style={styles.text}>{g.label}</Text>
+              <Text style={styles.muted}>{g.names.map((n) => `  ${n}`).join("\n")}</Text>
+            </View>
+          ))}
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {button(sorting ? "Applying…" : "Apply", () => void applySort(), "accent", sorting || !sortChanged)}
+            {button("Close", () => setSortPreview(null), "muted", sorting)}
+          </View>
         </View>
       ) : null}
       {bulk === "export" ? (
