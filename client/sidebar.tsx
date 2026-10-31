@@ -116,23 +116,23 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
       setTimeout(() => setLockedLeads((s) => new Set([...s].filter((id) => id !== lead.id))), CHECK_IN_DEDUPE_MS);
     }
   };
-  const handAction = async (lead: BoardAgent, kind: "clear" | "snooze") => {
+  const handAction = async (item: RaisedHandItem, kind: "clear" | "snooze") => {
+    const lead = item.lead;
     if (handSent.has(lead.id)) return;
+    const unlock = () => setHandSent((m) => new Map([...m].filter(([id]) => id !== lead.id)));
     const sent = kind === "clear" ? "cleared" : "snoozed";
     setHandSent((m) => new Map(m).set(lead.id, sent));
     try {
-      const res =
-        kind === "clear"
-          ? await clearRpc({ leadId: lead.id })
-          : await snoozeRpc({ leadId: lead.id, flagAt: lead.labels["needs-aub-at"] ?? "" });
-      if (!res.ok) toast.error(res.message);
+      const expected = { leadId: lead.id, flagAt: lead.labels["needs-aub-at"]?.trim() ?? "", reason: item.reason };
+      const res = await (kind === "clear" ? clearRpc(expected) : snoozeRpc(expected));
+      if (res.ok) setTimeout(unlock, CLEAR_HAND_DEDUPE_MS);
+      else {
+        unlock();
+        toast.error(res.message);
+      }
     } catch (error) {
+      unlock();
       toast.error(`Could not ${kind}: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setTimeout(
-        () => setHandSent((m) => new Map([...m].filter(([id]) => id !== lead.id))),
-        CLEAR_HAND_DEDUPE_MS,
-      );
     }
   };
   const handButtons = (item: RaisedHandItem) => {
@@ -145,7 +145,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
             accessibilityRole="button"
             accessibilityLabel={`Snooze raised hand for ${item.lead.title ?? "lead"} for 1 hour`}
             disabled={sent !== undefined}
-            onPress={() => void handAction(item.lead, "snooze")}
+            onPress={() => void handAction(item, "snooze")}
           >
             <Chip theme={theme} label={sent === "snoozed" ? "✓ 1h" : "💤 1h"} tone={sent === "snoozed" ? "accent" : "muted"} />
           </Pressable>
@@ -154,7 +154,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
           accessibilityRole="button"
           accessibilityLabel={`Clear raised hand for ${item.lead.title ?? "lead"}`}
           disabled={sent !== undefined}
-          onPress={() => void handAction(item.lead, "clear")}
+          onPress={() => void handAction(item, "clear")}
         >
           <Chip theme={theme} label={sent === "cleared" ? "✓" : "✕"} tone={sent === "cleared" ? "accent" : "muted"} />
         </Pressable>
@@ -232,7 +232,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
                 accessibilityRole="button"
                 accessibilityLabel={`Clear raised hand for ${lane.title}`}
                 disabled={handSent.has(raisedItem.lead.id)}
-                onPress={() => void handAction(raisedItem.lead, "clear")}
+                onPress={() => void handAction(raisedItem, "clear")}
               >
                 <Text style={styles.text}>{handSent.has(raisedItem.lead.id) ? "✓" : "🙋"}</Text>
               </Pressable>

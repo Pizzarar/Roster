@@ -32,6 +32,16 @@ export function needsAubStampMs(labels: Readonly<Record<string, string>> | undef
   return raw ? Date.parse(raw) : Number.NaN;
 }
 
+/** The flag a UI showed when Aub acted on it; a clear/snooze only applies if the lead still carries exactly this. */
+export interface ExpectedHand {
+  readonly flagAt: string;
+  readonly reason: string;
+}
+
+export function handMatches(labels: Readonly<Record<string, string>> | undefined, expected: ExpectedHand): boolean {
+  return (labels?.[NEEDS_AUB_AT_LABEL]?.trim() ?? "") === expected.flagAt && needsAubReasonText(labels) === expected.reason;
+}
+
 /** Stable marker Roster appends to every prompt it sends into a brainstorm, so those never read as Aub typing. */
 export const ROSTER_PROMPT_MARKER = "<!-- roster -->";
 

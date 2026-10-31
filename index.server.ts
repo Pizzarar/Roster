@@ -28,8 +28,12 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(stopAgentRpc, stopAgent);
   server.handle(checkInLeadsRpc, ({ leadId }, { paseo }) => checkIns.run(paseo, leadId));
-  server.handle(clearHandRpc, ({ leadId }) => aubHandAction("clear", leadId));
-  server.handle(snoozeHandRpc, ({ leadId, flagAt }) => aubHandAction("snooze", leadId, flagAt));
+  server.handle(clearHandRpc, ({ leadId, flagAt, reason }, { paseo }) =>
+    aubHandAction("clear", leadId, { flagAt, reason }, paseo),
+  );
+  server.handle(snoozeHandRpc, ({ leadId, flagAt, reason }, { paseo }) =>
+    aubHandAction("snooze", leadId, { flagAt, reason }, paseo),
+  );
   server.handle(autoArchiveStateRpc, (_input, { paseo }) => {
     autoArchiver.bind(paseo);
     return autoArchiver.snapshot();

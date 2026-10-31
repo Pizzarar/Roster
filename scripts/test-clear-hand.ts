@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { clearHandLabels, CLEAR_HAND_DEDUPE_MS, isDuplicateClick, isHandSnoozed, snoozeHandLabels, SNOOZE_MS } from "../shared/clear-hand.ts";
-import { aubMayHaveReplied, isLeadAwaitingAub, isWaitingOnAub, unhandledNeedsAubReason } from "../shared/needs-aub.ts";
+import { handMatches, aubMayHaveReplied, isLeadAwaitingAub, isWaitingOnAub, unhandledNeedsAubReason } from "../shared/needs-aub.ts";
 
 const NOW = Date.parse("2026-10-31T12:00:00.000Z");
 const AT = "2026-10-31T11:00:00.000Z";
@@ -45,6 +45,18 @@ const tests: [string, () => void][] = [
   ["no snooze labels -> not snoozed", () => {
     assert.equal(isHandSnoozed(handled, NOW), false);
     assert.equal(isHandSnoozed(undefined, NOW), false);
+  }],
+  ["a matching flag clears; a changed reason or at is refused", () => {
+    const shown = { flagAt: AT, reason: "Pick tick rate" };
+    assert.equal(handMatches(handled, shown), true);
+    assert.equal(handMatches({ ...handled, "needs-aub": "New question" }, shown), false);
+    assert.equal(handMatches({ ...handled, "needs-aub-at": "2026-10-31T12:10:00.000Z" }, shown), false);
+    assert.equal(handMatches({ "needs-aub": "cleared" }, shown), false);
+  }],
+  ["an unhandled flag (before routing, no at) still matches what was shown", () => {
+    const labels = { "needs-aub": "Pick tick rate" };
+    assert.equal(handMatches(labels, { flagAt: "", reason: "Pick tick rate" }), true);
+    assert.equal(handMatches({ ...labels, "needs-aub": "Other" }, { flagAt: "", reason: "Pick tick rate" }), false);
   }],
   ["dedupe window", () => {
     assert.equal(isDuplicateClick(undefined, NOW), false);
