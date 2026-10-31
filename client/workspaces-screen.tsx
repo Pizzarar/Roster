@@ -6,10 +6,20 @@ import { autoArchiveStateRpc, runAutoArchiveRpc, undoAutoArchiveRpc, type AutoAr
 import { checkInLeadsRpc, createBrainstormRpc } from "../shared/brainstorm";
 import { checkWorkspaceMergesRpc } from "../shared/workspaces";
 import { makeStyles, Toggle, useAgentProfiles, type Styles } from "./board";
-import { isLeadAwaitingAub, matchBrainstormForLead, normalizePath, type BoardConfig } from "../shared/config";
+import { isLeadAwaitingAub, pairLeadsWithBrainstorms, normalizePath, type BoardConfig } from "../shared/config";
 import { BrainstormChip, useLeadBrainstorm } from "./brainstorm-link";
 import { useBoardConfig } from "./config";
-import { agentKind, basename, displayTitle, leadArea, relativeTime, sidebarTitle, type BoardAgent } from "./model";
+import {
+  agentKind,
+  basename,
+  compareAgents,
+  displayTitle,
+  isTracked,
+  leadArea,
+  relativeTime,
+  sidebarTitle,
+  type BoardAgent,
+} from "./model";
 import { useBoard, useNow } from "./store";
 import { Chip, ConfirmButton, StatusDot, statusColor } from "./ui";
 
@@ -102,7 +112,7 @@ function WorkspaceRowView({
   const { workspace, verdict } = row;
   const isMerged = workspace.merged || workspace.pr?.merged === true;
   const lead = row.agents.some((agent) => agentKind(agent, cfg) === "lead");
-  const waitingOnAub = row.agents.some((agent) => agentKind(agent, cfg) === "lead" && isLeadAwaitingAub(agent, brainstorms, cfg));
+  const waitingOnAub = row.agents.some((agent) => agentKind(agent, cfg) === "lead" && isLeadAwaitingAub(agent));
   const main = lead || workspace.kind !== "worktree";
   const activity = relativeTime(workspace.activityAt ?? workspace.createdAt, now);
   const meta =
@@ -194,11 +204,17 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
   const waitingLeads = useMemo(
     () => {
       const live = [...board.agents.values()].filter((a) => !a.archivedAt && a.status !== "closed");
-      const brainstorms = live.filter((a) => agentKind(a, cfg) === "brainstorm");
-      return live.filter((a) => agentKind(a, cfg) === "lead" && isLeadAwaitingAub(a, brainstorms, cfg));
+      return live.filter((a) => agentKind(a, cfg) === "lead" && isLeadAwaitingAub(a));
     },
     [board.agents, cfg],
   );
+  // User-configured tracker sections (title/folder/label) used to live in the sidebar.
+  const trackerSections = useMemo(() => {
+    const agents = [...board.agents.values()].sort(compareAgents);
+    return cfg.trackers
+      .filter((tracker) => tracker.kind !== "leads" && tracker.kind !== "brainstorm")
+      .map((tracker) => ({ tracker, agents: agents.filter((agent) => isTracked(agent, tracker, cfg)) }));
+  }, [board.agents, cfg]);
   const fetchAutoState = useRpc(autoArchiveStateRpc);
   const runAutoArchive = useRpc(runAutoArchiveRpc);
   const undoAutoArchive = useRpc(undoAutoArchiveRpc);
@@ -432,6 +448,13 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
       ),
     [board.agents, cfg],
   );
+
+  const leadPairs = useMemo(() => {
+    const leads = [...board.agents.values()].filter(
+      (a) => !a.archivedAt && a.status !== "closed" && agentKind(a, cfg) === "lead",
+    );
+    return pairLeadsWithBrainstorms(leads, liveBrainstorms, cfg).pairs;
+  }, [board.agents, liveBrainstorms, cfg]);
 
   const spawnBrainstorm = async (target?: BrainstormTarget, profileId?: string) => {
     if (!target) return;
@@ -727,6 +750,47 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
         ) : null}
       </View>
 
+      {trackerSections.length > 0 ? (
+        <View style={styles.group}>
+          {trackerSections.map(({ tracker, agents }, index) => (
+            <View key={tracker.id}>
+              {index > 0 ? <View style={styles.divider} /> : null}
+              <View style={styles.row}>
+                <Text style={[styles.text, { fontWeight: "600", flex: 1 }]} numberOfLines={1}>
+                  {tracker.name}
+                </Text>
+                <Text style={styles.muted}>{agents.length}</Text>
+              </View>
+              {agents.length === 0 ? (
+                <View style={styles.row}>
+                  <Text style={styles.muted}>None active</Text>
+                </View>
+              ) : (
+                agents.slice(0, Math.max(tracker.limit, 1)).map((agent) => (
+                  <Pressable
+                    key={agent.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open ${sidebarTitle(agent, cfg)}`}
+                    onPress={() => navigation?.openAgent({ agentId: agent.id })}
+                    style={styles.row}
+                  >
+                    <StatusDot color={statusColor(theme, agent.status)} />
+                    <Text style={[styles.text, { flex: 1, minWidth: 0 }]} numberOfLines={1}>
+                      {sidebarTitle(agent, cfg)}
+                    </Text>
+                  </Pressable>
+                ))
+              )}
+              {agents.length > tracker.limit ? (
+                <View style={styles.row}>
+                  <Text style={styles.muted}>{agents.length - tracker.limit} more on the Roster board</Text>
+                </View>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      ) : null}
+
       <TextInput
         value={query}
         onChangeText={setQuery}
@@ -799,10 +863,10 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
         const safeRows = section.rows.filter((r) => r.verdict.kind === "candidate");
         const renderRow = (row: WorkspaceRow, divider: boolean) => {
           const lead =
-            cfg.linkBrainstorms && cfg.brainstormPreset
+            cfg.brainstormPreset
               ? row.agents.find((a) => !a.archivedAt && a.status !== "closed" && agentKind(a, cfg) === "lead")
               : undefined;
-          const brainstorm = lead ? matchBrainstormForLead(lead, liveBrainstorms, cfg) : undefined;
+          const brainstorm = lead ? leadPairs.get(lead.id) : undefined;
           return (
           <View key={row.workspace.id}>
             {divider ? <View style={styles.divider} /> : null}

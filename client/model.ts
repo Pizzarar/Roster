@@ -1,8 +1,8 @@
 import {
   isLeadAgent,
   isLeadAwaitingAub,
-  matchBrainstormForLead,
-  needsAubFlaggedMs,
+  pairLeadsWithBrainstorms,
+  needsAubStampMs,
   needsAubReasonText,
   normalizePath,
   PARENT_LABEL,
@@ -84,18 +84,73 @@ export function leadArea(lead: BoardAgent, cfg: BoardConfig): string {
   return stripped || basename(lead.cwd);
 }
 
-/** Live brainstorms that do not match any live lead. */
-export function orphanBrainstorms(
+/** Display/ordering time only (never used to decide whether a flag is answered). */
+function flagTimeMs(lead: BoardAgent): number {
+  const stamped = needsAubStampMs(lead.labels);
+  if (Number.isFinite(stamped)) return stamped;
+  for (const iso of [lead.updatedAt, lead.createdAt]) {
+    const ms = Date.parse(iso ?? "");
+    if (Number.isFinite(ms)) return ms;
+  }
+  return Number.NaN;
+}
+
+/** One sidebar row: a project's brainstorm (where Aub talks) paired with its lead (the secondary chip). */
+export interface ProjectLane {
+  readonly key: string;
+  readonly title: string;
+  readonly lead: BoardAgent | undefined;
+  readonly brainstorm: BoardAgent | undefined;
+}
+
+/** "BRAINSTORM · MAIN GAME" -> "MAIN GAME". */
+export function brainstormArea(brainstorm: BoardAgent): string {
+  const stripped = displayTitle(brainstorm).replace(/^BRAINSTORM\s*[·:-]?\s*/i, "").trim();
+  return stripped || basename(brainstorm.cwd);
+}
+
+/** Leads paired with their brainstorm via matchBrainstormForLead, then brainstorms that have no lead. */
+export function projectLanes(
   leads: readonly BoardAgent[],
   brainstorms: readonly BoardAgent[],
   cfg: BoardConfig,
-): BoardAgent[] {
-  const matchedIds = new Set<string>();
-  for (const lead of leads) {
-    const matched = matchBrainstormForLead(lead, brainstorms, cfg);
-    if (matched) matchedIds.add(matched.id);
+): ProjectLane[] {
+  const { pairs, unpaired } = pairLeadsWithBrainstorms(leads, brainstorms, cfg);
+  const lanes: ProjectLane[] = leads.map((lead) => ({
+    key: lead.id,
+    title: leadArea(lead, cfg),
+    lead,
+    brainstorm: pairs.get(lead.id),
+  }));
+  for (const brainstorm of unpaired) {
+    lanes.push({ key: brainstorm.id, title: brainstormArea(brainstorm), lead: undefined, brainstorm });
   }
-  return brainstorms.filter((b) => !matchedIds.has(b.id));
+  return lanes;
+}
+
+/** "ord71" from a lead title, else a short form of its area. */
+export function leadShortId(lead: BoardAgent, cfg: BoardConfig): string {
+  const ord = /\bord\d+\b/i.exec(displayTitle(lead));
+  if (ord) return ord[0].toLowerCase();
+  const area = leadArea(lead, cfg);
+  return area.length > 10 ? `${area.slice(0, 9)}…` : area;
+}
+
+/** Running workers per active lead, using the same spawner-chain grouping as the board. */
+export function runningWorkersByLead(
+  agents: readonly BoardAgent[],
+  cfg: BoardConfig,
+  relays: Relays,
+): Map<string, number> {
+  const live = agents.filter((a) => !a.archivedAt && a.status !== "closed");
+  const counts = new Map<string, number>();
+  for (const group of groupAgents(agents, live, cfg, relays)) {
+    const lead = group.agents.find((a) => agentKind(a, cfg) === "lead");
+    if (!lead) continue;
+    const running = group.agents.filter((a) => agentKind(a, cfg) === "worker" && a.status === "running").length;
+    counts.set(lead.id, running);
+  }
+  return counts;
 }
 
 export interface RaisedHandItem {
@@ -106,8 +161,8 @@ export interface RaisedHandItem {
 }
 
 /**
- * Flagged leads in FIFO order by flag time (`needs-aub-at`, fallback `updatedAt`).
- * Clears when Aub has sent a message in that project's brainstorm after `flaggedAt` (`lastUserMessageAt`).
+ * Flagged leads in FIFO order by flag time (`needs-aub-at`, fallback `updatedAt`, display only).
+ * A hand stays up until the NeedsAubWatcher clears the label after a human message in the brainstorm.
  */
 export function raisedHandsQueue(
   agents: readonly BoardAgent[],
@@ -117,14 +172,15 @@ export function raisedHandsQueue(
   const leads = live.filter((a) => agentKind(a, cfg) === "lead");
   const brainstorms = live.filter((a) => agentKind(a, cfg) === "brainstorm");
   const queue: { item: RaisedHandItem; ms: number }[] = [];
+  const { pairs } = pairLeadsWithBrainstorms(leads, brainstorms, cfg);
   for (const lead of leads) {
-    if (!isLeadAwaitingAub(lead, brainstorms, cfg)) continue;
-    const ms = needsAubFlaggedMs(lead);
+    if (!isLeadAwaitingAub(lead)) continue;
+    const ms = flagTimeMs(lead);
     queue.push({
       ms,
       item: {
         lead,
-        brainstorm: matchBrainstormForLead(lead, brainstorms, cfg),
+        brainstorm: pairs.get(lead.id),
         reason: needsAubReasonText(lead.labels),
         flaggedAt: Number.isFinite(ms) ? new Date(ms).toISOString() : "",
       },

@@ -1,16 +1,20 @@
 import type { RpcInput } from "@getpaseo/plugin";
-import { execCommand, type PluginServerContext } from "@getpaseo/plugin/server";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { labelArg, runPaseo } from "./paseo-cli";
 import { checkInLeadsRpc, resolveProviderAutoMode, type createBrainstormRpc, type renameBrainstormRpc } from "../shared/brainstorm";
 import {
   AGENT_PAGE_LIMIT,
   isBrainstormAgent,
   isLeadAgent,
   isWaitingOnAub,
-  aubRepliedSinceFlag,
-  matchBrainstormForLead,
+  aubMayHaveReplied,
+  aubReplied,
+  brainstormForLead,
+  pairLeadsWithBrainstorms,
   NEEDS_AUB_AT_LABEL,
   NEEDS_AUB_LABEL,
   NEEDS_AUB_REASON_LABEL,
+  ROSTER_PROMPT_MARKER,
   normalizePath,
   unhandledNeedsAubReason,
   type BoardConfig,
@@ -19,21 +23,6 @@ import {
 type PaseoApi = Parameters<Parameters<PluginServerContext["handle"]>[1]>[1]["paseo"];
 type ProviderId = Parameters<PaseoApi["providers"]["listModes"]>[0];
 type AgentCreateConfig = Parameters<PaseoApi["agents"]["create"]>[0]["config"];
-
-function paseoCandidates(): string[] {
-  const candidates: string[] = [];
-  if (process.env.PASEO_CLI) {
-    candidates.push(process.env.PASEO_CLI);
-  }
-  candidates.push("paseo");
-  if (process.env.APPDATA) {
-    candidates.push(`${process.env.APPDATA}\\npm\\paseo.cmd`);
-  }
-  if (process.env.LOCALAPPDATA) {
-    candidates.push(`${process.env.LOCALAPPDATA}\\Programs\\Paseo\\resources\\bin\\paseo.cmd`);
-  }
-  return candidates;
-}
 
 function messageOf(error: unknown): string {
   const stderr = (error as { stderr?: unknown }).stderr;
@@ -57,7 +46,6 @@ function leadAreaFromTitle(title: string | null | undefined, cwd: string, cfg: B
 }
 
 export async function renameBrainstorm({ agentId, title, leadKey }: RpcInput<typeof renameBrainstormRpc>) {
-  let lastError = "paseo CLI not found";
   const args = [
     "agent",
     "update",
@@ -66,21 +54,14 @@ export async function renameBrainstorm({ agentId, title, leadKey }: RpcInput<typ
     title,
     "--label",
     "role=brainstorm",
-    ...(leadKey ? ["--label", `lead=${leadKey}`] : []),
+    ...(leadKey ? ["--label", labelArg("lead", leadKey)] : []),
   ];
-
-  for (const command of paseoCandidates()) {
-    try {
-      await execCommand(command, args, { timeout: 30_000 });
-      return { ok: true, message: `Renamed to ${title}` };
-    } catch (error) {
-      const code = (error as { code?: unknown }).code;
-      lastError = messageOf(error);
-      if (code !== "ENOENT") break;
-    }
+  try {
+    await runPaseo(args);
+    return { ok: true, message: `Renamed to ${title}` };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
   }
-
-  return { ok: false, message: lastError };
 }
 
 export async function createBrainstorm(
@@ -144,17 +125,21 @@ export async function createBrainstorm(
         workspaceId: workspaceId ?? (matchedLead as { workspaceId?: string } | undefined)?.workspaceId,
         cwd,
       };
+      // Pair against every live lead, so an unlabeled target can't take another lead's keyed brainstorm.
+      const otherLeads = liveAgents.filter(
+        (a) => a.id !== matchedLead?.id && isLeadAgent(a.title, a.labels ?? {}, cfg),
+      );
+      const targetId = matchedLead?.id ?? "__target__";
+      const pair = (t: typeof target) =>
+        brainstormForLead({ id: targetId, ...t }, [...otherLeads, { id: targetId, ...t }], liveBrainstorms, cfg);
       const existing =
-        matchBrainstormForLead(target, liveBrainstorms, cfg) ??
-        (rootNorm !== ""
-          ? matchBrainstormForLead({ ...target, workspaceId: undefined, cwd: rootNorm }, liveBrainstorms, cfg)
-          : undefined);
+        pair(target) ?? (rootNorm !== "" ? pair({ ...target, workspaceId: undefined, cwd: rootNorm }) : undefined);
       if (existing) {
         if (reason?.trim()) {
           const leadDesc = resolvedLeadTitle ? `"${resolvedLeadTitle}" (${resolvedLeadId})` : resolvedLeadId ?? cwd;
           await paseo.agents
             .ref(existing.id)
-            .send(`Lead ${leadDesc} needs a decision on: ${reason.trim()}\n\nPlease review and surface this for Aub.`)
+            .send(`Lead ${leadDesc} needs a decision on: ${reason.trim()}\n\nPlease review and surface this for Aub.\n\n${ROSTER_PROMPT_MARKER}`)
             .catch(() => undefined);
         }
         return {
@@ -228,11 +213,13 @@ export async function createBrainstorm(
       ? Object.assign(baseConfig, { settings: { shareMcp: "on" } })
       : baseConfig;
 
-  const prompt = reason?.trim()
+  const basePrompt = reason?.trim()
     ? `Lead "${resolvedLeadTitle ?? resolvedArea}" (${resolvedLeadId ?? cwd}) needs a decision on: ${reason.trim()}. You are the Brainstorm chat for ${resolvedArea} (${cwd}). Summarize the decision needed for Aub and riff with Aub here, then message the lead when approved.`
     : resolvedLeadId
       ? `You are the Brainstorm chat for ${resolvedArea} (${cwd}). Current active lead: "${resolvedLeadTitle}" (${resolvedLeadId}). Riff with Aub here and dispatch or message the lead when approved.`
       : `You are the Brainstorm chat for ${resolvedArea} (${cwd}). Riff with Aub here and dispatch or start a lead when approved.`;
+  // The boot prompt lands as a user message that can post-date needs-aub-at; the marker keeps it from reading as Aub.
+  const prompt = `${basePrompt}\n\n${ROSTER_PROMPT_MARKER}`;
 
   const handle = await paseo.agents.create({
     cwd,
@@ -249,18 +236,15 @@ export async function createBrainstorm(
   };
 }
 
-export async function updateAgentLabels(agentId: string, labels: readonly string[]): Promise<boolean> {
-  const args = ["agent", "update", agentId, ...labels.flatMap((l) => ["--label", l])];
-  for (const command of paseoCandidates()) {
-    try {
-      await execCommand(command, args, { timeout: 30_000 });
-      return true;
-    } catch (error) {
-      const code = (error as { code?: unknown }).code;
-      if (code !== "ENOENT") break;
-    }
+export async function updateAgentLabels(agentId: string, labels: Readonly<Record<string, string>>): Promise<boolean> {
+  const args = ["agent", "update", agentId, ...Object.entries(labels).flatMap(([k, v]) => ["--label", labelArg(k, v)])];
+  try {
+    await runPaseo(args);
+    return true;
+  } catch (error) {
+    console.error(`label update for ${agentId} failed: ${messageOf(error)}`);
+    return false;
   }
-  return false;
 }
 
 export async function checkInLeads(paseo: PaseoApi, cfg: BoardConfig) {
@@ -275,11 +259,13 @@ export async function checkInLeads(paseo: PaseoApi, cfg: BoardConfig) {
     .map((e) => e.agent)
     .filter((a) => !a.archivedAt && a.status !== "closed");
   const brainstorms = live.filter((a) => isBrainstormAgent(a.title, a.labels ?? {}, cfg));
-  const idleLeads = live.filter((a) => a.status === "idle" && isLeadAgent(a.title, a.labels ?? {}, cfg));
+  const allLeads = live.filter((a) => isLeadAgent(a.title, a.labels ?? {}, cfg));
+  const idleLeads = allLeads.filter((a) => a.status === "idle");
+  const { pairs } = pairLeadsWithBrainstorms(allLeads, brainstorms, cfg);
 
   let prompted = 0;
   for (const lead of idleLeads) {
-    if (!matchBrainstormForLead(lead, brainstorms, cfg)) {
+    if (!pairs.get(lead.id)) {
       try {
         await paseo.agents
           .ref(lead.id)
@@ -300,10 +286,26 @@ export async function checkInLeads(paseo: PaseoApi, cfg: BoardConfig) {
   };
 }
 
+async function routedBaselineMs(paseo: PaseoApi, brainstormId: string | undefined): Promise<number> {
+  let baseline = Date.now();
+  if (!brainstormId) return baseline;
+  const listed = await paseo.agents
+    .list({ includeBackground: true, filter: { includeBackground: true }, page: { limit: AGENT_PAGE_LIMIT } })
+    .catch(() => null);
+  const userMs = Date.parse(listed?.entries.find((e) => e.agent.id === brainstormId)?.agent.lastUserMessageAt ?? "");
+  if (Number.isFinite(userMs)) baseline = Math.max(baseline, userMs);
+  return baseline;
+}
+
 export class NeedsAubWatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
   private boundPaseo: PaseoApi | null = null;
   private readonly inFlight = new Set<string>();
+  /**
+   * Lead id -> a flag already routed whose "handled" label write hasn't landed yet. Later ticks retry only the
+   * write, never createBrainstorm. Dropped on success, or when the lead is gone or no longer flagged.
+   */
+  private readonly routed = new Map<string, { reason: string; labels: Record<string, string> }>();
 
   constructor(private readonly getConfig: () => BoardConfig) {}
 
@@ -339,36 +341,56 @@ export class NeedsAubWatcher {
         page: { limit: AGENT_PAGE_LIMIT },
       })
       .catch(() => null);
-    const live = (listed?.entries ?? [])
+    // A failed list would look like "no leads" and prune pending label retries from `routed`.
+    if (!listed) return;
+    const live = listed.entries
       .map((e) => e.agent)
       .filter((a) => !a.archivedAt && a.status !== "closed");
     const leads = live.filter((a) => isLeadAgent(a.title, a.labels ?? {}, cfg));
     const brainstorms = live.filter((a) => isBrainstormAgent(a.title, a.labels ?? {}, cfg));
 
+    const { pairs } = pairLeadsWithBrainstorms(leads, brainstorms, cfg);
+    for (const id of [...this.routed.keys()]) {
+      const lead = leads.find((l) => l.id === id);
+      if (!lead || !unhandledNeedsAubReason(lead.labels)) this.routed.delete(id);
+    }
     for (const lead of leads) {
       const reason = unhandledNeedsAubReason(lead.labels);
-      if (reason && cfg.needsAubAutoSpawn && !this.inFlight.has(lead.id)) {
+      // Spawns only for a real, non-empty, unhandled reason.
+      if (reason) {
+        if (!cfg.needsAubAutoSpawn || this.inFlight.has(lead.id)) continue;
         this.inFlight.add(lead.id);
-        const flaggedAt = new Date().toISOString();
         try {
-          await createBrainstorm(
-            {
-              leadId: lead.id,
-              leadTitle: lead.title ?? undefined,
-              area: leadAreaFromTitle(lead.title, lead.cwd, cfg),
-              cwd: lead.cwd,
-              workspaceId: lead.workspaceId ?? undefined,
-              reuseExisting: true,
+          let pending = this.routed.get(lead.id);
+          if (pending?.reason !== reason) {
+            this.routed.delete(lead.id);
+            const routed = await createBrainstorm(
+              {
+                leadId: lead.id,
+                leadTitle: lead.title ?? undefined,
+                area: leadAreaFromTitle(lead.title, lead.cwd, cfg),
+                cwd: lead.cwd,
+                workspaceId: lead.workspaceId ?? undefined,
+                reuseExisting: true,
+                reason,
+              },
+              p,
+              cfg,
+            );
+            // Routing sends a prompt into the brainstorm, which bumps its lastUserMessageAt. Stamp after
+            // that, and no earlier than the brainstorm's own latest user message, so only a later message clears.
+            const flaggedAt = new Date(await routedBaselineMs(p, routed.agentId)).toISOString();
+            pending = {
               reason,
-            },
-            p,
-            cfg,
-          );
-          await updateAgentLabels(lead.id, [
-            `${NEEDS_AUB_LABEL}=handled`,
-            `${NEEDS_AUB_REASON_LABEL}=${reason}`,
-            `${NEEDS_AUB_AT_LABEL}=${flaggedAt}`,
-          ]);
+              labels: {
+                [NEEDS_AUB_LABEL]: "handled",
+                [NEEDS_AUB_REASON_LABEL]: reason,
+                [NEEDS_AUB_AT_LABEL]: flaggedAt,
+              },
+            };
+            this.routed.set(lead.id, pending);
+          }
+          if (await updateAgentLabels(lead.id, pending.labels)) this.routed.delete(lead.id);
         } catch (error) {
           console.error(
             `auto-spawn brainstorm for ${lead.id} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -377,14 +399,22 @@ export class NeedsAubWatcher {
           this.inFlight.delete(lead.id);
         }
       } else if (lead.labels?.[NEEDS_AUB_LABEL]?.toLowerCase() === "handled") {
-        const brainstorm = matchBrainstormForLead(lead, brainstorms, cfg);
-        if (aubRepliedSinceFlag(lead, brainstorm)) {
-          // Empty values blank the stamp and reason so a later re-flag starts clean.
-          await updateAgentLabels(lead.id, [
-            `${NEEDS_AUB_LABEL}=cleared`,
-            `${NEEDS_AUB_AT_LABEL}=`,
-            `${NEEDS_AUB_REASON_LABEL}=`,
-          ]);
+        const brainstorm = pairs.get(lead.id);
+        if (brainstorm && aubMayHaveReplied(lead.labels, brainstorm.lastUserMessageAt)) {
+          // lastUserMessageAt also counts agent-sent prompts; confirm a human-typed message in the timeline.
+          const tail = await p.agents
+            .ref(brainstorm.id)
+            .timeline.refetch({ direction: "tail", limit: 40 })
+            .then((page) => page.entries)
+            .catch(() => undefined);
+          if (aubReplied(lead.labels, brainstorm.lastUserMessageAt, tail)) {
+            // Only now are the stamp and reason blanked, so a later re-flag starts clean.
+            await updateAgentLabels(lead.id, {
+              [NEEDS_AUB_LABEL]: "cleared",
+              [NEEDS_AUB_AT_LABEL]: "",
+              [NEEDS_AUB_REASON_LABEL]: "",
+            });
+          }
         }
       }
     }

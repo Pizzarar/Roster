@@ -1,4 +1,5 @@
 import { rosterSettings, type GuidanceRule, type RosterSettings, type Tracker, type TrackerKind } from "./settings";
+import { normalizePath } from "./match";
 
 /** Sub-agent counting: poll the timeline tail of running agents while visible. */
 export const SUBAGENT_POLL_MS = 30_000;
@@ -37,7 +38,6 @@ export interface BoardConfig {
   readonly groupUnassignedByFolder: boolean;
   readonly showStopButton: boolean;
   readonly countSubagents: boolean;
-  readonly linkBrainstorms: boolean;
   readonly detachNewLeads: boolean;
   readonly adoptWorkers: boolean;
   readonly relayWorkerEvents: boolean;
@@ -114,11 +114,6 @@ export function trackerName(tracker: Pick<Tracker, "name" | "kind" | "pattern">)
   return tracker.name.trim() || (tracker.kind === "folder" && tracker.pattern.trim()) || KIND_NAMES[tracker.kind];
 }
 
-/** Lower-case, forward slashes, no trailing slash: for folder matching. */
-export function normalizePath(path: string): string {
-  return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-}
-
 function parseLabel(pattern: string): [string, string] | null {
   const at = pattern.indexOf("=");
   if (at <= 0) return null;
@@ -193,65 +188,8 @@ export function isBrainstormAgent(
   return cfg.brainstormTitle?.test(title ?? "") ?? false;
 }
 
-export const NEEDS_AUB_LABEL = "needs-aub";
-export const NEEDS_AUB_REASON_LABEL = "needs-aub-reason";
-export const NEEDS_AUB_AT_LABEL = "needs-aub-at";
-
-/** True when a lead has flagged needs-aub (including after auto-spawn sets needs-aub=handled). */
-export function isWaitingOnAub(labels: Readonly<Record<string, string>> | undefined): boolean {
-  const raw = labels?.[NEEDS_AUB_LABEL]?.trim();
-  if (!raw) return false;
-  return !/^(?:none|false|cleared|0)$/i.test(raw);
-}
-
-/** Non-null when needs-aub has a fresh reason that hasn't been marked handled yet. */
-export function unhandledNeedsAubReason(labels: Readonly<Record<string, string>> | undefined): string | null {
-  const raw = labels?.[NEEDS_AUB_LABEL]?.trim();
-  if (!raw) return null;
-  if (/^(?:handled|none|false|cleared|0)$/i.test(raw)) return null;
-  return raw;
-}
-
-export function needsAubReasonText(labels: Readonly<Record<string, string>> | undefined): string {
-  return (
-    unhandledNeedsAubReason(labels) ||
-    labels?.[NEEDS_AUB_REASON_LABEL]?.trim() ||
-    "Waiting on your decision"
-  );
-}
-
-export interface FlaggableLead {
-  readonly labels?: Readonly<Record<string, string>>;
-  readonly updatedAt?: string | null;
-  readonly createdAt?: string | null;
-}
-
-/**
- * When a lead flagged needs-aub, in ms (NaN if unknown). A live (unhandled) flag ignores any stored
- * `needs-aub-at`, which belongs to an earlier flag; otherwise a bad stamp falls back to updatedAt/createdAt.
- */
-export function needsAubFlaggedMs(lead: FlaggableLead): number {
-  const fallback = () => {
-    for (const iso of [lead.updatedAt, lead.createdAt]) {
-      const ms = Date.parse(iso ?? "");
-      if (Number.isFinite(ms)) return ms;
-    }
-    return Number.NaN;
-  };
-  if (unhandledNeedsAubReason(lead.labels)) return fallback();
-  const stamped = Date.parse(lead.labels?.[NEEDS_AUB_AT_LABEL]?.trim() ?? "");
-  return Number.isFinite(stamped) ? stamped : fallback();
-}
-
-/** True once Aub has messaged the lead's brainstorm after the lead flagged needs-aub. */
-export function aubRepliedSinceFlag(
-  lead: FlaggableLead,
-  brainstorm: { readonly lastUserMessageAt?: string | null } | undefined,
-): boolean {
-  const userMs = Date.parse(brainstorm?.lastUserMessageAt ?? "");
-  const flagMs = needsAubFlaggedMs(lead);
-  return Number.isFinite(userMs) && Number.isFinite(flagMs) && userMs > flagMs;
-}
+export * from "./match";
+export * from "./needs-aub";
 
 export function compileConfig(values: RosterSettings): BoardConfig {
   const hasBrainstorm = values.brainstormPreset;
@@ -273,7 +211,6 @@ export function compileConfig(values: RosterSettings): BoardConfig {
     groupUnassignedByFolder: values.groupUnassignedByFolder,
     showStopButton: values.showStopButton,
     countSubagents: values.countSubagents,
-    linkBrainstorms: values.linkBrainstorms,
     detachNewLeads: hasLeads ? values.detachNewLeads : false,
     adoptWorkers: hasLeads ? values.adoptWorkers : false,
     relayWorkerEvents: hasLeads ? values.relayWorkerEvents : false,
@@ -302,43 +239,5 @@ export function compileConfig(values: RosterSettings): BoardConfig {
 
 export const DEFAULT_CONFIG: BoardConfig = compileConfig(DEFAULT_SETTINGS);
 
-export interface MatchableAgent {
-  readonly labels?: Readonly<Record<string, string>>;
-  readonly workspaceId?: string;
-  readonly cwd: string;
-}
-
-/** Match a brainstorm to a lead: `lead=<key>` label first, then workspaceId, then normalized cwd. */
-export function matchBrainstormForLead<T extends MatchableAgent>(
-  lead: MatchableAgent,
-  brainstorms: readonly T[],
-  cfg: Pick<BoardConfig, "labels">,
-): T | undefined {
-  const key = (agent: MatchableAgent) => agent.labels?.[cfg.labels.lead]?.trim().toLowerCase();
-  const leadKey = key(lead);
-  // A brainstorm that names a different lead must not be matched by location alone.
-  const namesOtherLead = (b: MatchableAgent) => {
-    const bKey = key(b);
-    return Boolean(leadKey && bKey && bKey !== leadKey);
-  };
-  if (leadKey) {
-    const byKey = brainstorms.find((b) => key(b) === leadKey);
-    if (byKey) return byKey;
-  }
-  if (lead.workspaceId) {
-    const byWs = brainstorms.find((b) => b.workspaceId === lead.workspaceId && !namesOtherLead(b));
-    if (byWs) return byWs;
-  }
-  const leadCwd = normalizePath(lead.cwd);
-  return brainstorms.find((b) => normalizePath(b.cwd) === leadCwd && !namesOtherLead(b));
-}
-
-/** The lead is flagged needs-aub and Aub has not replied in its brainstorm since. Drives every 🙋 badge and the queue. */
-export function isLeadAwaitingAub<T extends MatchableAgent & { readonly lastUserMessageAt?: string | null }>(
-  lead: MatchableAgent & FlaggableLead,
-  brainstorms: readonly T[],
-  cfg: Pick<BoardConfig, "labels">,
-): boolean {
-  if (!isWaitingOnAub(lead.labels)) return false;
-  return !aubRepliedSinceFlag(lead, matchBrainstormForLead(lead, brainstorms, cfg));
-}
+/** Re-exported for call sites that already import from config. */
+export { isLeadAwaitingAub } from "./needs-aub";

@@ -17,3 +17,12 @@ declare module "node:os" {
 }
 
 declare const process: { platform: string; env: Record<string, string | undefined> };
+
+declare module "node:child_process" {
+  export function execFile(
+    file: string,
+    args: string[],
+    options: { timeout?: number; encoding?: "utf8"; windowsHide?: boolean; shell?: boolean },
+    callback: (error: Error | null, stdout: string, stderr: string) => void,
+  ): unknown;
+}

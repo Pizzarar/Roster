@@ -43,6 +43,25 @@ export function dotIcon(color: string): ComponentType<PluginIconProps> {
   return icon;
 }
 
+const ringIcons = new Map<string, ComponentType<PluginIconProps>>();
+
+/** A SidebarRow icon: a hollow dot, for rows that have nothing to open yet. Cached per colour. */
+export function ringIcon(color: string): ComponentType<PluginIconProps> {
+  let icon = ringIcons.get(color);
+  if (!icon) {
+    icon = function RingIcon({ size }: PluginIconProps) {
+      const d = Math.max(6, Math.round(size * 0.55));
+      return (
+        <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
+          <View style={{ width: d, height: d, borderRadius: d / 2, borderWidth: 1.5, borderColor: color }} />
+        </View>
+      );
+    };
+    ringIcons.set(color, icon);
+  }
+  return icon;
+}
+
 const ATTENTION_LABEL: Record<string, string> = {
   permission: "needs permission",
   error: "error",

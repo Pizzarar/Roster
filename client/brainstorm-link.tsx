@@ -1,6 +1,6 @@
 import { useRpc, type PluginHostProps } from "@getpaseo/plugin/client";
 import { useToast } from "@getpaseo/plugin/client/ui";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Pressable, Text } from "react-native";
 import { createBrainstormRpc } from "../shared/brainstorm";
 import { useBoardConfig } from "./config";
@@ -17,12 +17,16 @@ export function useLeadBrainstorm(openAgent: (agentId: string) => void) {
   const toast = useToast();
   const createRpc = useRpc(createBrainstormRpc);
   const [busyLeadId, setBusyLeadId] = useState<string | null>(null);
+  const inFlight = useRef(new Set<string>());
   const openOrCreate = useCallback(
     async (lead: BoardAgent, brainstorm: BoardAgent | undefined) => {
       if (brainstorm) {
         openAgent(brainstorm.id);
         return;
       }
+      // A ref, not state: two taps in one render frame must not both create.
+      if (inFlight.current.has(lead.id)) return;
+      inFlight.current.add(lead.id);
       setBusyLeadId(lead.id);
       try {
         const res = await createRpc({
@@ -41,6 +45,7 @@ export function useLeadBrainstorm(openAgent: (agentId: string) => void) {
       } catch (error) {
         toast.error(`Create failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
+        inFlight.current.delete(lead.id);
         setBusyLeadId(null);
       }
     },
