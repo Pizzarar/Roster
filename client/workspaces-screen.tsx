@@ -2,7 +2,7 @@ import { usePaseo, useRpc, type PluginScreenProps } from "@getpaseo/plugin/clien
 import { copyText, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/ui";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { autoArchiveStateRpc, runAutoArchiveRpc, type AutoArchiveState } from "../shared/auto-archive";
+import { autoArchiveStateRpc, runAutoArchiveRpc, undoAutoArchiveRpc, type AutoArchiveState } from "../shared/auto-archive";
 import { checkWorkspaceMergesRpc } from "../shared/workspaces";
 import { makeStyles, Toggle, type Styles } from "./board";
 import type { BoardConfig } from "../shared/config";
@@ -166,6 +166,8 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
   const checkMerges = useRpc(checkWorkspaceMergesRpc);
   const fetchAutoState = useRpc(autoArchiveStateRpc);
   const runAutoArchive = useRpc(runAutoArchiveRpc);
+  const undoAutoArchive = useRpc(undoAutoArchiveRpc);
+  const [undoBusy, setUndoBusy] = useState(false);
   const [autoState, setAutoState] = useState<AutoArchiveState | null>(null);
   const [showAutoLog, setShowAutoLog] = useState(false);
   const [query, setQuery] = useState("");
@@ -220,6 +222,25 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
       if (dryRun) setShowAutoLog(true);
     } catch (error) {
       toast.error(`Auto-archive failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const undoAuto = async (input: { itemId?: string; at?: string } = {}) => {
+    setUndoBusy(true);
+    try {
+      const res = await undoAutoArchive(input);
+      setAutoState(res.state);
+      if (res.failed.length > 0) {
+        toast.error(res.restored > 0 ? `Restored ${res.restored} · ${res.failed.join(" · ")}` : res.failed.join(" · "));
+      } else if (res.restored > 0) {
+        toast.show(`Restored ${res.restored} item${res.restored === 1 ? "" : "s"}`);
+      } else {
+        toast.show("Nothing to undo");
+      }
+    } catch (error) {
+      toast.error(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setUndoBusy(false);
     }
   };
 
@@ -334,9 +355,23 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
         <View style={[styles.row, { flexWrap: "wrap", justifyContent: "space-between" }]}>
           <Text style={[styles.text, { flex: 1, minWidth: 160 }]}>
             {autoState?.lastRunAt
-              ? `${autoState.lastRunDry ? "Dry run: would auto-archive" : "Auto-archived"} ${autoState.lastCount} item${autoState.lastCount === 1 ? "" : "s"} · ${relativeTime(autoState.lastRunAt, now)}`
+              ? `${autoState.lastRunDry ? "Dry run: would auto-archive" : "Auto-archived"} ${autoState.lastCount} · View / Undo · ${relativeTime(autoState.lastRunAt, now)}`
               : "Auto-archive ready"}
           </Text>
+          <Pressable accessibilityRole="button" onPress={() => setShowAutoLog((v) => !v)} style={styles.smallButton}>
+            <Text style={styles.text}>{showAutoLog ? "Hide log" : `View (${autoState?.items.length ?? 0})`}</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            disabled={undoBusy || !autoState?.items.some((i) => !i.dryRun && !i.undoneAt)}
+            onPress={() => void undoAuto({})}
+            style={[
+              styles.smallButton,
+              (undoBusy || !autoState?.items.some((i) => !i.dryRun && !i.undoneAt)) && { opacity: 0.5 },
+            ]}
+          >
+            <Text style={styles.text}>{undoBusy ? "Undoing…" : "Undo"}</Text>
+          </Pressable>
           <Pressable accessibilityRole="button" onPress={() => void runAuto(true)} style={styles.smallButton}>
             <Text style={styles.text}>Dry run</Text>
           </Pressable>
@@ -348,9 +383,6 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
             accessibilityLabel="Run auto-archive now"
             onConfirm={() => runAuto(false)}
           />
-          <Pressable accessibilityRole="button" onPress={() => setShowAutoLog((v) => !v)} style={styles.smallButton}>
-            <Text style={styles.text}>{`View log (${autoState?.items.length ?? 0})`}</Text>
-          </Pressable>
         </View>
         {showAutoLog && autoState ? (
           <View>
@@ -363,7 +395,11 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
               <View key={`${item.id}-${item.at}`}>
                 <View style={styles.divider} />
                 <View style={[styles.row, { paddingVertical: 6 }]}>
-                  <Chip theme={theme} label={item.dryRun ? "[dry run]" : "[archived]"} tone={item.dryRun ? "muted" : "accent"} />
+                  <Chip
+                    theme={theme}
+                    label={item.undoneAt ? "[undone]" : item.dryRun ? "[dry run]" : "[archived]"}
+                    tone={item.undoneAt ? "muted" : item.dryRun ? "muted" : "accent"}
+                  />
                   <Chip theme={theme} label={item.kind} />
                   <Text style={[styles.text, { flexShrink: 1 }]} numberOfLines={1}>
                     {item.name}
@@ -371,6 +407,21 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
                   <Text style={[styles.muted, { flex: 1, minWidth: 0 }]} numberOfLines={1}>
                     {item.reason} · {relativeTime(item.at, now)}
                   </Text>
+                  {item.undoError ? (
+                    <Text style={[styles.text, { color: theme.colors.statusDanger }]} numberOfLines={1}>
+                      {item.undoError}
+                    </Text>
+                  ) : null}
+                  {!item.dryRun && !item.undoneAt ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={undoBusy}
+                      onPress={() => void undoAuto({ itemId: item.id, at: item.at })}
+                      style={[styles.smallButton, undoBusy && { opacity: 0.5 }]}
+                    >
+                      <Text style={styles.text}>Undo</Text>
+                    </Pressable>
+                  ) : null}
                   <Pressable
                     accessibilityRole="button"
                     onPress={() => {
