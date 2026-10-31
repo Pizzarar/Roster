@@ -2,7 +2,7 @@ import type { PluginHookAgent, PluginServerContext, PluginSettings } from "@getp
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { compileConfig, DEFAULT_CONFIG, isLeadAgent, PARENT_LABEL, type BoardConfig } from "../shared/config";
+import { compileConfig, DEFAULT_CONFIG, isLeadAgent, PARENT_LABEL, wasLeadAgent, type BoardConfig } from "../shared/config";
 import type { HandoffRecord } from "../shared/handoff";
 import type { rosterSettings } from "../shared/settings";
 
@@ -137,10 +137,7 @@ export class Handoffs {
 
   /** A lead now, or a lead that has since been retired by title or role. */
   private wasLead(agent: Snapshot): boolean {
-    if (isLeadAgent(agent.title, agent.labels, this.cfg)) return true;
-    if (this.cfg.hideTitle?.test(agent.title ?? "")) return true;
-    const role = agent.labels[this.cfg.labels.role];
-    return role !== undefined && this.cfg.oldLeadRoles.includes(role);
+    return wasLeadAgent(agent.title, agent.labels, this.cfg);
   }
 
   // ---- lifecycle hooks -------------------------------------------------------------

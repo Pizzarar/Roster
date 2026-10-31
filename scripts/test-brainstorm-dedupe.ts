@@ -1,19 +1,20 @@
 import assert from "node:assert/strict";
 import { resolveLead } from "../shared/match.ts";
-import { isLeadAgent, DEFAULT_CONFIG } from "../shared/config.ts";
-import { createBrainstorm, type PaseoApi } from "../server/brainstorm.ts";
+import { isLeadAgent, wasLeadAgent, DEFAULT_CONFIG } from "../shared/config.ts";
+import { createBrainstorm, leadAreaFromTitle, type PaseoApi } from "../server/brainstorm.ts";
 
 const cfg = DEFAULT_CONFIG;
 const CWD = "C:/wt/plugins";
-type A = { id: string; title: string; cwd: string; updatedAt: string; status: string; archivedAt: string | null; labels: Record<string, string> };
-const agent = (id: string, title: string, updatedAt: string, over: Partial<A> = {}): A => ({
-  id, title, cwd: CWD, updatedAt, status: "idle", archivedAt: null, labels: { role: "lead" }, ...over,
+type A = { id: string; title: string; cwd: string; createdAt: string; updatedAt: string; status: string; archivedAt: string | null; labels: Record<string, string> };
+const agent = (id: string, title: string, createdAt: string, over: Partial<A> = {}): A => ({
+  id, title, cwd: CWD, createdAt, updatedAt: createdAt, status: "idle", archivedAt: null, labels: { role: "lead" }, ...over,
 });
-const OLD = agent("ord6", "★ LEAD · PLUGINS ord6 (Claude)", "2026-10-31T07:44:00Z");
-const NEW = agent("ord7", "★ LEAD · PLUGINS", "2026-10-31T18:04:00Z");
+// ord6 is the one that kept getting activity (updatedAt late); ord7 is the real, later generation.
+const OLD = agent("ord6", "★ LEAD · PLUGINS (Claude) ord6", "2026-10-30T07:44:00Z", { updatedAt: "2026-10-31T23:00:00Z" });
+const NEW = agent("ord7", "★ LEAD · PLUGINS", "2026-10-31T18:04:00Z", { updatedAt: "2026-10-31T18:05:00Z" });
 const rules = {
   isLead: (a: A) => isLeadAgent(a.title, a.labels, cfg),
-  areaOf: (a: A) => a.title.replace(/^★ LEAD · /, "").replace(/\s+ord\d+.*$/, ""),
+  areaOf: (a: A) => leadAreaFromTitle(a.title, a.cwd, cfg),
 };
 const where = { cwd: CWD };
 
@@ -52,6 +53,49 @@ const tests: [string, () => Promise<void> | void][] = [
   ["an unknown id resolves by location; no live lead gives undefined", () => {
     assert.equal(resolveLead("gone", [OLD, NEW], where, rules)?.id, "ord7");
     assert.equal(resolveLead("gone", [], where, rules), undefined);
+  }],
+  ["generation ranks by ordN, then createdAt, never updatedAt", () => {
+    // OLD has the newest updatedAt, yet resolving from it must not stay on it, nor from NEW go back to it.
+    assert.equal(resolveLead("ord6", [OLD, NEW], where, rules)?.id, "ord7");
+    assert.equal(resolveLead("ord7", [NEW, OLD], where, rules)?.id, "ord7");
+    const a = agent("a", "★ LEAD · PLUGINS ord8", "2026-10-29T00:00:00Z");
+    const b = agent("b", "★ LEAD · PLUGINS ord9", "2026-10-28T00:00:00Z");
+    assert.equal(resolveLead("a", [a, b], where, rules)?.id, "b");
+  }],
+  ["leadAreaFromTitle strips every parenthetical and the ordN token anywhere", () => {
+    for (const t of ["★ LEAD · PLUGINS (Claude) ord6", "★ LEAD · PLUGINS ord6 (Claude)", "★ LEAD · (x) PLUGINS ord12"])
+      assert.equal(leadAreaFromTitle(t, "C:/p", cfg).toLowerCase(), "plugins");
+  }],
+  ["with no id, the caller's area filters; another area is never returned", () => {
+    const ui = agent("ui", "★ LEAD · UI LAB", "2026-10-31T19:00:00Z");
+    const root = { cwd: "C:/wt/plugins/sub", rootPath: CWD };
+    assert.equal(resolveLead(undefined, [OLD, NEW, ui], { ...root, area: "ui lab" }, rules)?.id, "ui");
+    assert.equal(resolveLead("not-in-page", [OLD, NEW, ui], { ...root, area: "plugins" }, rules)?.id, "ord7");
+    assert.equal(resolveLead(undefined, [OLD, NEW], { ...root, area: "Other" }, rules), undefined);
+  }],
+  ["wasLeadAgent counts (old) titles as former leads even with hideTitle off", () => {
+    const noHide = { ...cfg, hideTitle: null };
+    assert.equal(wasLeadAgent("(old) ★ LEAD · X", {}, noHide), true);
+    assert.equal(wasLeadAgent("  (OLD) worker", {}, noHide), true);
+    assert.equal(wasLeadAgent("x", { role: "former-lead" }, noHide), true);
+    assert.equal(wasLeadAgent("plain worker", {}, noHide), false);
+    assert.equal(isLeadAgent("(old) ★ LEAD · X", {}, noHide), false);
+  }],
+  ["a failed agent listing returns an error and creates nothing", async () => {
+    const { paseo, created } = fakePaseo([NEW]);
+    (paseo.agents as unknown as { list: () => Promise<never> }).list = async () => {
+      throw new Error("down");
+    };
+    const res = await createBrainstorm({ area: "PLUGINS", cwd: "C:/wt/fail", reuseExisting: true }, paseo, cfg);
+    assert.equal(res.ok, false);
+    assert.equal(created.length, 0);
+  }],
+  ["worktrees of one project root share the lock and the recent create", async () => {
+    const { paseo, created } = fakePaseo([NEW, OLD]);
+    const mk = (cwd: string) => ({ area: "PLUGINS", cwd, projectRootPath: "C:/wt/proj-root", reuseExisting: true });
+    const [a, b] = await Promise.all([createBrainstorm(mk("C:/wt/proj-root/a"), paseo, cfg), createBrainstorm(mk("C:/wt/proj-root/b"), paseo, cfg)]);
+    assert.equal(created.length, 1);
+    assert.equal(a.agentId, b.agentId);
   }],
   ["a lead for a different area in the same cwd is not a successor", () => {
     const ui = agent("ui", "★ LEAD · UI LAB", "2026-10-31T19:00:00Z");

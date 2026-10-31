@@ -44,9 +44,11 @@ function basename(path: string): string {
 export function leadAreaFromTitle(title: string | null | undefined, cwd: string, cfg: BoardConfig): string {
   const raw = title?.trim() || "";
   const stripped = (cfg.sidebarStrip ? raw.replace(cfg.sidebarStrip, "") : raw)
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\bord\d+\b/gi, " ")
+    .trim()
     .replace(/^★?\s*LEAD\s*[·:-]?\s*/i, "")
-    .replace(/\s*\([^)]*\)\s*$/g, "")
-    .replace(/\s+\bord\d+\b.*$/i, "")
+    .replace(/\s+/g, " ")
     .trim();
   return stripped || basename(cwd);
 }
@@ -70,21 +72,23 @@ export async function renameBrainstorm({ agentId, title, leadKey }: RpcInput<typ
   }
 }
 
-/** Brainstorm creation per cwd runs one at a time, so a second click sees the first one's agent. */
+/** Brainstorm creation per project root runs one at a time, so a second click sees the first one's agent. */
 const createLocks = new Map<string, Promise<unknown>>();
-/** cwd -> the brainstorm just created there; the listing can lag behind agents.create, and the title is set later. */
+/** Project root -> the brainstorm just created there; the listing can lag behind agents.create, and the title is set later. */
 const recentCreates = new Map<string, { agentId: string; slug: string; title: string; at: number }>();
 export const RECENT_BRAINSTORM_MS = 10 * 60_000;
 const UNLISTED_GRACE_MS = 2 * 60_000;
 
-type CreateResult = { ok: boolean; reused: boolean; message: string; agentId: string };
+type CreateResult = { ok: boolean; reused: boolean; message: string; agentId?: string };
+
+const projectKey = (cwd: string, root?: string) => normalizePath(root?.trim() || cwd);
 
 export async function createBrainstorm(
   input: RpcInput<typeof createBrainstormRpc>,
   paseo: PaseoApi,
   cfg: BoardConfig,
 ): Promise<CreateResult> {
-  const key = normalizePath(input.cwd);
+  const key = projectKey(input.cwd, input.projectRootPath);
   const previous = createLocks.get(key) ?? Promise.resolve();
   const run = previous.catch(() => undefined).then(() => createBrainstormLocked(input, paseo, cfg));
   createLocks.set(key, run);
@@ -130,11 +134,12 @@ async function createBrainstormLocked(
       page: { limit: AGENT_PAGE_LIMIT },
     })
     .catch(() => null);
-  const allAgents = (listed?.entries ?? []).map((e) => e.agent);
+  if (!listed) return { ok: false, reused: false, message: "Could not list agents, so no brainstorm was created. Try again." };
+  const allAgents = listed.entries.map((e) => e.agent);
   const liveAgents = allAgents.filter((a) => !a.archivedAt && a.status !== "closed");
 
   // The caller's leadId may be stale (an old successor, a closed or retired lead): name the project's current lead.
-  matchedLead = resolveLead(leadId?.trim(), allAgents, { cwd, rootPath: projectRootPath }, {
+  matchedLead = resolveLead(leadId?.trim(), allAgents, { cwd, rootPath: projectRootPath, area: area?.trim() }, {
     isLead: (a) => isLeadAgent(a.title, a.labels ?? {}, cfg),
     areaOf: (a) => leadAreaFromTitle(a.title, a.cwd, cfg),
   });
@@ -245,9 +250,10 @@ ${ROSTER_PROMPT_MARKER}`)
 
   // A brainstorm made moments ago may not be listed or titled yet; the same project reuses it.
   const now = Date.now();
+  const recentKey = projectKey(cwd, projectRootPath);
   const recentKeys = [cwdNorm, rootNorm].filter(Boolean);
   for (const [k, r] of recentCreates) if (now - r.at > RECENT_BRAINSTORM_MS) recentCreates.delete(k);
-  const recentHit = recentKeys.map((k) => recentCreates.get(k)).find((r) => r && r.slug === slug);
+  const recentHit = recentCreates.get(recentKey)?.slug === slug ? recentCreates.get(recentKey) : undefined;
   if (recentHit) {
     const listedHit = allAgents.find((a) => a.id === recentHit.agentId);
     const alive = listedHit ? !listedHit.archivedAt && listedHit.status !== "closed" : now - recentHit.at < UNLISTED_GRACE_MS;
@@ -269,7 +275,7 @@ ${ROSTER_PROMPT_MARKER}`)
     config,
     prompt,
   });
-  for (const k of recentKeys) recentCreates.set(k, { agentId: handle.id, slug, title, at: Date.now() });
+  recentCreates.set(recentKey, { agentId: handle.id, slug, title, at: Date.now() });
   return {
     ok: true,
     reused: false,
@@ -351,7 +357,11 @@ export class NeedsAubWatcher {
    */
   private readonly routed = new Map<string, { reason: string; labels: Record<string, string> }>();
 
-  constructor(private readonly getConfig: () => BoardConfig) {}
+  private readonly getConfig: () => BoardConfig;
+
+  constructor(getConfig: () => BoardConfig) {
+    this.getConfig = getConfig;
+  }
 
   bind(paseo: PaseoApi): void {
     this.boundPaseo = paseo;

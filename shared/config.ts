@@ -1,5 +1,5 @@
 import { rosterSettings, type GuidanceRule, type RosterSettings, type Tracker, type TrackerKind } from "./settings";
-import { normalizePath } from "./match";
+import { isRetiredTitle, normalizePath } from "./match";
 import { minutesError } from "./check-in";
 import { parseGroupOrder } from "./groups";
 
@@ -164,9 +164,6 @@ function staleDays(value: string): number {
   return daysError(value) ? 3 : Number(value);
 }
 
-/** A "(old) …" title marks a retired agent whatever the settings say. */
-const RETIRED_TITLE = /^\s*\(old\)/i;
-
 /**
  * Whether an agent is an active lead: a lead `role` label, else a lead title.
  * Retired titles and retired roles never count.
@@ -177,11 +174,22 @@ export function isLeadAgent(
   cfg: BoardConfig,
 ): boolean {
   const text = title ?? "";
-  if (RETIRED_TITLE.test(text) || cfg.hideTitle?.test(text)) return false;
+  if (isRetiredTitle(text) || cfg.hideTitle?.test(text)) return false;
   const role = labels[cfg.labels.role];
   const known = [...cfg.leadRoles, ...cfg.oldLeadRoles, ...cfg.brainstormRoles];
   if (role !== undefined && known.includes(role)) return cfg.leadRoles.includes(role);
   return cfg.leadTitle?.test(text) ?? false;
+}
+
+/** A lead now, or one retired by an "(old)" title, hideTitle or an old-lead role: its workers may be adopted. */
+export function wasLeadAgent(
+  title: string | null | undefined,
+  labels: Readonly<Record<string, string>>,
+  cfg: BoardConfig,
+): boolean {
+  if (isLeadAgent(title, labels, cfg) || isRetiredTitle(title) || cfg.hideTitle?.test(title ?? "")) return true;
+  const role = labels[cfg.labels.role];
+  return role !== undefined && cfg.oldLeadRoles.includes(role);
 }
 
 /** Whether an agent is a brainstorm: a brainstorm role, else a brainstorm title. Leads and retired titles never count. */
@@ -190,7 +198,7 @@ export function isBrainstormAgent(
   labels: Readonly<Record<string, string>>,
   cfg: BoardConfig,
 ): boolean {
-  if (isLeadAgent(title, labels, cfg) || RETIRED_TITLE.test(title ?? "") || cfg.hideTitle?.test(title ?? "")) return false;
+  if (isLeadAgent(title, labels, cfg) || isRetiredTitle(title) || cfg.hideTitle?.test(title ?? "")) return false;
   const role = labels[cfg.labels.role];
   if (role !== undefined && cfg.brainstormRoles.includes(role)) return true;
   if (role !== undefined && (cfg.leadRoles.includes(role) || cfg.oldLeadRoles.includes(role))) return false;
