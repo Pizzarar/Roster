@@ -49,6 +49,35 @@ const tests: [string, () => void][] = [
     assert.equal(agentGroupLabel({ kind: "worker", title: "just a title" }), null);
     assert.equal(agentGroupLabel({ kind: "worker", title: null }), null);
   }],
+  ["agent mapping: real worker titles", () => {
+    const label = (title: string, extra = {}) => agentGroupLabel({ kind: "worker", title, ...extra }, order);
+    const cases: [string, string | null][] = [
+      ["PR10 · group by prefix (Sonnet)", null],
+      ["CORRIDOR-BEATS-UI-P1 · implement (Sonnet)", "Implement"],
+      ["SKILL-DISCOVERY · implement-hard (Opus)", "Implement"],
+      ["REVIEW · DQ-MODEL-STACK-1031 (#683, Sonnet)", "Review"],
+      ["Gate 8 gallery · critique (Gemini)", "Review"],
+      ["HYDRO-PS2 · plan+review (Gemini)", "Review"],
+      ["SPRITE-LOOKOFF-A · vet+plan (Sonnet)", "Planner"],
+      ["ROSTER UI · structure duet (Art - Gemini)", "Art"],
+      ["PIXEL-ANCHOR · outliers (Gemini)", null],
+      ["PLUGINS - item D (Sonnet)", "PLUGINS"],
+    ];
+    for (const [title, expected] of cases) assert.equal(label(title), expected, title);
+  }],
+  ["agent mapping: priority order", () => {
+    const w = (extra: object) => agentGroupLabel({ kind: "worker", title: "REVIEW · x (Art - Gemini)", ...extra }, order);
+    assert.equal(w({ role: "audit", profileName: "Scout - x" }), "Audit");
+    assert.equal(w({ role: "mystery", profileName: "Scout - x" }), "Scout");
+    assert.equal(w({}), "Art");
+    assert.equal(agentGroupLabel({ kind: "worker", title: "x · review" }, order), "Review");
+    assert.equal(agentGroupLabel({ kind: "worker", title: "x", role: "Work Order" }, order), "Work Order");
+    assert.equal(agentGroupLabel({ kind: "lead", title: "x", role: "review" }, order), "Lead");
+  }],
+  ["role words use configured casing and names", () => {
+    assert.equal(agentGroupLabel({ kind: "worker", title: "x", role: "build" }, ["IMPLEMENT"]), "IMPLEMENT");
+    assert.equal(agentGroupLabel({ kind: "worker", title: "x", role: "Gizmo" }, ["gizmo"]), "gizmo");
+  }],
 ];
 
 let failed = 0;

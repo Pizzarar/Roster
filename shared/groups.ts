@@ -76,20 +76,82 @@ export function groupByPrefix<T>(
   return groupByLabel(items, (item) => namePrefix(nameOf(item)), order);
 }
 
+/** Role words (lower-case) that name a group without being its exact name. */
+const ROLE_ALIASES: Readonly<Record<string, string>> = {
+  implement: "Implement",
+  "implement-hard": "Implement",
+  build: "Implement",
+  review: "Review",
+  critique: "Review",
+  "plan+review": "Review",
+  plan: "Planner",
+  planner: "Planner",
+  "vet+plan": "Planner",
+  spec: "Spec",
+  audit: "Audit",
+  census: "Audit",
+  scout: "Scout",
+  lookup: "Scout",
+  check: "Check",
+  "pre-check": "Pre-check",
+  mechanical: "Mechanical",
+  "work order": "Work Order",
+  art: "Art",
+  duet: "Art",
+};
+
+/**
+ * The group a role word names: the whole text, else its leading word, matched case-insensitively against the
+ * alias table and the configured group names. Unknown words return null, so they never become groups of their own.
+ */
+export function roleWordGroup(text: string | null | undefined, order: readonly string[] = []): string | null {
+  const word = (text ?? "").trim().toLowerCase();
+  if (word === "") return null;
+  const configured = new Map(order.map((label) => [groupKey(label), label]));
+  const lookup = (key: string): string | null => {
+    const alias = ROLE_ALIASES[key];
+    if (alias) return configured.get(groupKey(alias)) ?? alias;
+    return configured.get(key) ?? null;
+  };
+  const words = word.split(/\s+/);
+  return (
+    lookup(word) ?? (words.length > 1 ? lookup(`${words[0]} ${words[1]}`) : null) ?? lookup(words[0]!)
+  );
+}
+
+/** Drops a trailing "(...)" such as the model note in "implement (Sonnet)". */
+const stripParenthetical = (text: string) => text.replace(/\s*\([^()]*\)\s*$/, "").trim();
+
+/** The trailing "(...)" content of a title, or null. */
+const trailingParenthetical = (text: string) => /\(([^()]*)\)\s*$/.exec(text)?.[1] ?? null;
+
 export interface AgentGroupInput {
   /** Roster's existing classification, from role labels and title patterns. */
   readonly kind: "lead" | "old-lead" | "brainstorm" | "worker";
+  /** The agent's role label value (e.g. "implement"), if any. */
+  readonly role?: string | null;
   /** Profile name when the agent carries one (a `profile` label), else null. */
   readonly profileName?: string | null;
   readonly title: string | null | undefined;
 }
 
 /**
- * The group label for a live agent: leads and brainstorms by their existing role, then the prefix of the profile
- * name, then the prefix of the title; null (→ "Other") when none has one.
+ * The group label for a live agent, first match wins: lead/brainstorm role; a known role label; the prefix of a
+ * profile label; a profile name in the title's trailing parenthetical ("(Art - Gemini)"); the "·" convention
+ * ("REVIEW · X" or "X · implement (Sonnet)"); the " - " title prefix. Null (becomes "Other") when none applies.
  */
-export function agentGroupLabel(agent: AgentGroupInput): string | null {
+export function agentGroupLabel(agent: AgentGroupInput, order: readonly string[] = []): string | null {
   if (agent.kind === "lead") return "Lead";
   if (agent.kind === "brainstorm") return "Brainstorm";
-  return namePrefix(agent.profileName) ?? namePrefix(agent.title);
+  const title = agent.title?.trim() ?? "";
+  const dot = title.split(/\s·\s/);
+  const dotRole =
+    dot.length > 1 ? (roleWordGroup(stripParenthetical(dot[0]!), order) ?? roleWordGroup(stripParenthetical(dot[1]!), order)) : null;
+  return (
+    roleWordGroup(agent.role, order) ??
+    namePrefix(agent.profileName) ??
+    namePrefix(trailingParenthetical(title)) ??
+    dotRole ??
+    namePrefix(title)
+  );
 }

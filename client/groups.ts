@@ -13,9 +13,10 @@ export function liveAgentGroups(agents: Iterable<BoardAgent>, cfg: BoardConfig):
     (agent) =>
       agentGroupLabel({
         kind: agentKind(agent, cfg),
+        role: agent.labels[cfg.labels.role],
         profileName: agent.labels[PROFILE_LABEL],
         title: agent.title,
-      }),
+      }, cfg.groupOrder),
     cfg.groupOrder,
   );
 }
