@@ -138,7 +138,7 @@ export interface AgentGroupInput {
 /**
  * The group label for a live agent, first match wins: lead/brainstorm role; a known role label; the prefix of a
  * profile label; a profile name in the title's trailing parenthetical ("(Art - Gemini)"); the "·" convention
- * ("REVIEW · X" or "X · implement (Sonnet)"); the " - " title prefix. Null (becomes "Other") when none applies.
+ * ("REVIEW · X" or "X · implement (Sonnet)"); the " - " title prefix when it is a role word (unknown prefixes never make one-off groups). Null (becomes "Other") when none applies.
  */
 export function agentGroupLabel(agent: AgentGroupInput, order: readonly string[] = []): string | null {
   if (agent.kind === "lead") return "Lead";
@@ -152,6 +152,6 @@ export function agentGroupLabel(agent: AgentGroupInput, order: readonly string[]
     namePrefix(agent.profileName) ??
     namePrefix(trailingParenthetical(title)) ??
     dotRole ??
-    namePrefix(title)
+    roleWordGroup(namePrefix(title), order)
   );
 }

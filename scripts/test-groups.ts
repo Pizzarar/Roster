@@ -61,7 +61,8 @@ const tests: [string, () => void][] = [
       ["SPRITE-LOOKOFF-A · vet+plan (Sonnet)", "Planner"],
       ["ROSTER UI · structure duet (Art - Gemini)", "Art"],
       ["PIXEL-ANCHOR · outliers (Gemini)", null],
-      ["PLUGINS - item D (Sonnet)", "PLUGINS"],
+      ["PLUGINS - item D (Sonnet)", null],
+      ["Review - Gemini audit", "Review"],
     ];
     for (const [title, expected] of cases) assert.equal(label(title), expected, title);
   }],
