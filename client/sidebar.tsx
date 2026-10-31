@@ -9,6 +9,7 @@ import { CLEAR_HAND_DEDUPE_MS } from "../shared/clear-hand";
 import { unhandledNeedsAubReason } from "../shared/needs-aub";
 import { CHECK_IN_DEDUPE_MS, formatQuiet, leadHealth } from "../shared/check-in";
 import { useBoardConfig } from "./config";
+import { liveAgentGroups, useGroupState } from "./groups";
 import {
   agentKind,
   compareAgents,
@@ -19,11 +20,15 @@ import {
   runningWorkersByLead,
   type BoardAgent,
   type ProjectLane,
+  sidebarTitle,
   type RaisedHandItem,
 } from "./model";
-import { BOARD_SCREEN, OPEN_AGENT_SCREEN, WORKSPACES_SCREEN, navigationOf } from "./navigation";
+import { BOARD_SCREEN, OPEN_AGENT_SCREEN, PROFILES_SCREEN, WORKSPACES_SCREEN, navigationOf } from "./navigation";
 import { useBoard, useNow } from "./store";
 import { attentionLabel, Chip, dotIcon, ringIcon, statusColor } from "./ui";
+
+/** Most agents shown under one role group before pointing at the Roster screen. */
+const ROLE_GROUP_ROWS = 8;
 
 export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
   const { theme, currentScreen, openScreen } = props;
@@ -50,6 +55,8 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
       running: agents.filter((agent) => agent.status === "running").length,
     };
   }, [board.agents, cfg]);
+  const groupState = useGroupState();
+  const roleGroups = useMemo(() => liveAgentGroups(board.agents.values(), cfg), [board.agents, cfg]);
   const queue = useMemo(() => raisedHandsQueue([...board.agents.values()], cfg, now), [board.agents, cfg, now]);
   const workers = useMemo(
     () => runningWorkersByLead([...board.agents.values()], cfg, board.handoffs.relays),
@@ -352,6 +359,45 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
         </Text>
       </View>
       {lanes.length === 0 ? <Text style={styles.empty}>None active</Text> : lanes.map(laneRow)}
+      {roleGroups.length > 0 ? (
+        <View>
+          <View style={styles.divider} />
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle} numberOfLines={1}>
+              Agents by role
+            </Text>
+          </View>
+          {roleGroups.map((group) => {
+            const open = groupState.isOpen(`sidebar:${group.key}`);
+            return (
+              <View key={group.key}>
+                <SidebarRow
+                  id={`role-${group.key}`}
+                  icon={open ? "ChevronDown" : "ChevronRight"}
+                  label={group.label}
+                  onPress={() => groupState.toggle(`sidebar:${group.key}`)}
+                  trailing={<Chip theme={theme} label={String(group.items.length)} />}
+                />
+                {open
+                  ? group.items.slice(0, ROLE_GROUP_ROWS).map((agent) => (
+                      <SidebarRow
+                        key={agent.id}
+                        id={`role-agent-${agent.id}`}
+                        icon={dotIcon(statusColor(theme, agent.status))}
+                        label={sidebarTitle(agent, cfg)}
+                        active={isOpen(agent)}
+                        onPress={() => openAgentId(agent.id)}
+                      />
+                    ))
+                  : null}
+                {open && group.items.length > ROLE_GROUP_ROWS ? (
+                  <Text style={styles.empty}>{group.items.length - ROLE_GROUP_ROWS} more on the Roster screen</Text>
+                ) : null}
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
       <View style={styles.divider} />
       <SidebarRow
         id="workspaces"
@@ -359,6 +405,13 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
         label="Workspaces"
         active={currentScreen?.screenId === WORKSPACES_SCREEN}
         onPress={() => openScreen({ screenId: WORKSPACES_SCREEN })}
+      />
+      <SidebarRow
+        id="profiles"
+        icon="Users"
+        label="Profiles"
+        active={currentScreen?.screenId === PROFILES_SCREEN}
+        onPress={() => openScreen({ screenId: PROFILES_SCREEN })}
       />
     </View>
   );
