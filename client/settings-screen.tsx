@@ -53,6 +53,7 @@ const TEXT_KEYS: readonly TextKey[] = [
   "sidebarStripPattern",
   "leadRoles",
   "oldLeadRoles",
+  "groupOrder",
   "roleLabel",
   "leadLabel",
   "taskLabel",
@@ -564,6 +565,13 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
             onChangeText={change("imagePrompt")}
             disabled={settings.saving}
           />
+        <SettingsInput
+          label="Group order"
+          hint="Comma-separated name prefixes, first to last, for the Profiles screen and live-agent groups. Others follow A-Z, then Other."
+          initialValue={draft.values.groupOrder}
+          onChangeText={change("groupOrder")}
+          disabled={settings.saving}
+        />
           <SettingsSwitch
             label="Group unlabelled agents by folder"
             hint="Otherwise they share one Unassigned group."

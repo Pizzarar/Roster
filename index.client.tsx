@@ -1,6 +1,7 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { AgentBoardScreen, OpenAgentScreen } from "./client/board";
-import { BOARD_SCREEN, OPEN_AGENT_SCREEN, WORKSPACES_SCREEN } from "./client/navigation";
+import { BOARD_SCREEN, OPEN_AGENT_SCREEN, PROFILES_SCREEN, WORKSPACES_SCREEN } from "./client/navigation";
+import { ProfilesScreen } from "./client/profiles-screen";
 import { RosterSettingsScreen } from "./client/settings-screen";
 import { AgentBoardSidebarItem } from "./client/sidebar";
 import { boardStore } from "./client/store";
@@ -22,6 +23,7 @@ export default function contribute(client: PluginClientContext) {
   client.addTimelineTransformer(toolCallImageTransformer);
   client.addTimelineTransformer(assistantMessageImageTransformer);
   client.addScreen({ id: WORKSPACES_SCREEN, title: "Workspaces", Component: WorkspacesScreen });
+  client.addScreen({ id: PROFILES_SCREEN, title: "Profiles", Component: ProfilesScreen });
   client.addScreen({ id: BOARD_SCREEN, title: "Roster", Component: AgentBoardScreen });
   client.addScreen({ id: OPEN_AGENT_SCREEN, title: "Open agent", Component: OpenAgentScreen });
   client.addSidebarHeaderItem({ id: "roster", title: "Roster", Component: AgentBoardSidebarItem });

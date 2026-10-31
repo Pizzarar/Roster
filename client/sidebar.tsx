@@ -1,8 +1,8 @@
 import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
-import { Icon, SidebarRow, useToast } from "@getpaseo/plugin/client/ui";
+import { Icon, ScrollView, SidebarRow, useToast } from "@getpaseo/plugin/client/ui";
 import { useMemo, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, useWindowDimensions, View } from "react-native";
 import { useLeadBrainstorm } from "./brainstorm-link";
 import { checkInLeadsRpc, clearHandRpc, snoozeHandRpc } from "../shared/brainstorm";
 import { CLEAR_HAND_DEDUPE_MS } from "../shared/clear-hand";
@@ -21,12 +21,14 @@ import {
   type ProjectLane,
   type RaisedHandItem,
 } from "./model";
-import { BOARD_SCREEN, OPEN_AGENT_SCREEN, WORKSPACES_SCREEN, navigationOf } from "./navigation";
+import { BOARD_SCREEN, OPEN_AGENT_SCREEN, PROFILES_SCREEN, WORKSPACES_SCREEN, navigationOf } from "./navigation";
 import { useBoard, useNow } from "./store";
 import { attentionLabel, Chip, dotIcon, ringIcon, statusColor } from "./ui";
 
 export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
   const { theme, currentScreen, openScreen } = props;
+  // Bound the panel so a tall list scrolls inside it and the rest of Paseo's sidebar stays reachable.
+  const maxHeight = Math.max(160, Math.min(440, Math.round(useWindowDimensions().height * 0.4)));
   const board = useBoard();
   const cfg = useBoardConfig();
   const now = useNow();
@@ -293,6 +295,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
           tone={board.status === "error" ? "danger" : running > 0 ? "accent" : "muted"}
         />
       </View>
+      <ScrollView style={{ maxHeight }} nestedScrollEnabled>
       {hand ? (
         <View>
           <View style={styles.banner}>
@@ -352,6 +355,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
         </Text>
       </View>
       {lanes.length === 0 ? <Text style={styles.empty}>None active</Text> : lanes.map(laneRow)}
+      </ScrollView>
       <View style={styles.divider} />
       <SidebarRow
         id="workspaces"
@@ -359,6 +363,13 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
         label="Workspaces"
         active={currentScreen?.screenId === WORKSPACES_SCREEN}
         onPress={() => openScreen({ screenId: WORKSPACES_SCREEN })}
+      />
+      <SidebarRow
+        id="profiles"
+        icon="Users"
+        label="Profiles"
+        active={currentScreen?.screenId === PROFILES_SCREEN}
+        onPress={() => openScreen({ screenId: PROFILES_SCREEN })}
       />
     </View>
   );

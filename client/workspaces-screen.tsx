@@ -10,6 +10,7 @@ import { makeStyles, Toggle, useAgentProfiles, type Styles } from "./board";
 import { isHandSnoozed, isLeadAwaitingAub, pairLeadsWithBrainstorms, normalizePath, type BoardConfig } from "../shared/config";
 import { BrainstormChip, useLeadBrainstorm } from "./brainstorm-link";
 import { useBoardConfig } from "./config";
+import { liveAgentGroups, useGroupState } from "./groups";
 import {
   agentKind,
   basename,
@@ -228,6 +229,8 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [creatingBrainstorm, setCreatingBrainstorm] = useState(false);
+  const groupState = useGroupState();
+  const roleGroups = useMemo(() => liveAgentGroups(board.agents.values(), cfg), [board.agents, cfg]);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<WorkspaceSort>("cleanup");
   const [filter, setFilter] = useState<Filter>("all");
@@ -791,6 +794,49 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
               ) : null}
             </View>
           ))}
+        </View>
+      ) : null}
+
+      {roleGroups.length > 0 ? (
+        <View style={styles.group}>
+          {roleGroups.map((group, index) => {
+            const id = `screen:${group.key}`;
+            const open = groupState.isOpen(id);
+            return (
+              <View key={group.key}>
+                {index > 0 ? <View style={styles.divider} /> : null}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: open }}
+                  accessibilityLabel={`${group.label}, ${group.items.length} agents, ${open ? "collapse" : "expand"}`}
+                  onPress={() => groupState.toggle(id)}
+                  style={styles.row}
+                >
+                  <Text style={styles.muted}>{open ? "▾" : "▸"}</Text>
+                  <Text style={[styles.text, { fontWeight: "600", flex: 1 }]} numberOfLines={1}>
+                    {group.label}
+                  </Text>
+                  <Text style={styles.muted}>{group.items.length}</Text>
+                </Pressable>
+                {open
+                  ? group.items.map((agent) => (
+                      <Pressable
+                        key={agent.id}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Open ${sidebarTitle(agent, cfg)}`}
+                        onPress={() => navigation?.openAgent({ agentId: agent.id })}
+                        style={styles.row}
+                      >
+                        <StatusDot color={statusColor(theme, agent.status)} />
+                        <Text style={[styles.text, { flex: 1, minWidth: 0 }]} numberOfLines={1}>
+                          {sidebarTitle(agent, cfg)}
+                        </Text>
+                      </Pressable>
+                    ))
+                  : null}
+              </View>
+            );
+          })}
         </View>
       ) : null}
 

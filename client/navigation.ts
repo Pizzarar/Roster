@@ -13,3 +13,4 @@ export function navigationOf(props: object): Navigation | undefined {
 }
 
 export const WORKSPACES_SCREEN = "workspaces";
+export const PROFILES_SCREEN = "profiles";
