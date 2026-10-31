@@ -100,7 +100,7 @@ export default function contribute(client: PluginClientContext) {
   });
   client.addSlashCommand({
     name: "check-in",
-    description: "Ask idle leads without a brainstorm if they have anything for Aub",
+    description: "Ask every live lead for a short status",
     argumentHint: "",
     context: "workspace",
     async onSubmit({ rpc }) {
@@ -110,7 +110,7 @@ export default function contribute(client: PluginClientContext) {
   });
   client.addCommandCenterItem({
     id: "check-in-leads",
-    title: "Roster: check in with idle leads",
+    title: "Roster: check in with all leads",
     icon: "MessageSquare",
     context: "global",
     keywords: ["needs-aub", "waiting", "leads", "brainstorm", "check in"],

@@ -40,7 +40,8 @@ export const createBrainstormRpc = defineRpc({
 
 export const checkInLeadsRpc = defineRpc({
   name: "brainstorm.check-in-leads",
-  input: z.object({}),
+  /** `leadId` checks in just that lead; omitted, every live lead. */
+  input: z.object({ leadId: z.string().optional() }),
   output: z.object({
     ok: z.boolean(),
     count: z.number(),

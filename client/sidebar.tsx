@@ -1,8 +1,11 @@
 import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
-import { Icon, SidebarRow } from "@getpaseo/plugin/client/ui";
+import { useRpc } from "@getpaseo/plugin/client";
+import { Icon, SidebarRow, useToast } from "@getpaseo/plugin/client/ui";
 import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useLeadBrainstorm } from "./brainstorm-link";
+import { checkInLeadsRpc } from "../shared/brainstorm";
+import { CHECK_IN_DEDUPE_MS, formatQuiet, leadHealth } from "../shared/check-in";
 import { useBoardConfig } from "./config";
 import {
   agentKind,
@@ -27,6 +30,10 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
   const now = useNow();
   const [handsOpen, setHandsOpen] = useState(false);
   const [handIndex, setHandIndex] = useState(0);
+  const toast = useToast();
+  const checkInRpc = useRpc(checkInLeadsRpc);
+  /** Leads whose check-in button is locked (in flight, then a few seconds after). */
+  const [lockedLeads, setLockedLeads] = useState<ReadonlySet<string>>(new Set());
   const { lanes, running } = useMemo(() => {
     const agents = [...board.agents.values()].sort(compareAgents);
     const live = agents.filter((agent) => !agent.archivedAt && agent.status !== "closed");
@@ -92,6 +99,19 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
     else openScreen({ screenId: OPEN_AGENT_SCREEN, params: { agentId } });
   };
   const { openOrCreate, busyLeadId } = useLeadBrainstorm(openAgentId);
+  const checkInLead = async (lead: BoardAgent) => {
+    if (lockedLeads.has(lead.id)) return;
+    setLockedLeads((s) => new Set(s).add(lead.id));
+    try {
+      const res = await checkInRpc({ leadId: lead.id });
+      if (res.ok) toast.show(res.message);
+      else toast.error(res.message);
+    } catch (error) {
+      toast.error(`Check-in failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setTimeout(() => setLockedLeads((s) => new Set([...s].filter((id) => id !== lead.id))), CHECK_IN_DEDUPE_MS);
+    }
+  };
   const openBoard = () => openScreen({ screenId: BOARD_SCREEN });
   const isOpen = (agent: BoardAgent | undefined) =>
     agent !== undefined &&
@@ -127,6 +147,26 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
     ) : (
       <Chip theme={theme} label="no lead" />
     );
+    const health = lead ? leadHealth(lead, now, cfg.checkInQuietMs) : undefined;
+    const healthChip =
+      health?.kind === "error" ? (
+        <Chip theme={theme} label="error" tone="danger" />
+      ) : health?.kind === "closed" ? (
+        <Chip theme={theme} label="closed" tone="danger" />
+      ) : health?.kind === "quiet" ? (
+        <Chip theme={theme} label={`quiet ${formatQuiet(health.ms ?? 0)}`} tone="warning" />
+      ) : null;
+    const locked = lead !== undefined && lockedLeads.has(lead.id);
+    const checkInButton = lead ? (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Check in with ${lane.title}`}
+        disabled={locked}
+        onPress={() => void checkInLead(lead)}
+      >
+        <Chip theme={theme} label={locked ? "✓" : "↻"} tone={locked ? "accent" : "muted"} />
+      </Pressable>
+    ) : null;
     return (
       <SidebarRow
         key={lane.key}
@@ -142,6 +182,8 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
             {raised ? <Text style={styles.text}>🙋</Text> : null}
             {attention ? <Chip theme={theme} label="!" tone="warning" /> : null}
             {noBrainstorm ? <Text style={styles.muted}>{busy ? "…" : "＋ chat"}</Text> : null}
+            {healthChip}
+            {checkInButton}
             {leadChip}
           </View>
         }

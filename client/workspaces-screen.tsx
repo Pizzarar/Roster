@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { autoArchiveStateRpc, runAutoArchiveRpc, undoAutoArchiveRpc, type AutoArchiveState } from "../shared/auto-archive";
 import { checkInLeadsRpc, createBrainstormRpc } from "../shared/brainstorm";
+import { CHECK_IN_DEDUPE_MS } from "../shared/check-in";
 import { checkWorkspaceMergesRpc } from "../shared/workspaces";
 import { makeStyles, Toggle, useAgentProfiles, type Styles } from "./board";
 import { isLeadAwaitingAub, pairLeadsWithBrainstorms, normalizePath, type BoardConfig } from "../shared/config";
@@ -200,7 +201,7 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
   const checkMerges = useRpc(checkWorkspaceMergesRpc);
   const checkInLeads = useRpc(checkInLeadsRpc);
   const { openOrCreate, busyLeadId } = useLeadBrainstorm((agentId) => navigation?.openAgent({ agentId }));
-  const [checkingIn, setCheckingIn] = useState(false);
+  const [checkingIn, setCheckingIn] = useState<false | "busy" | "sent">(false);
   const waitingLeads = useMemo(
     () => {
       const live = [...board.agents.values()].filter((a) => !a.archivedAt && a.status !== "closed");
@@ -523,9 +524,9 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
             ) : null}
             <Pressable
               accessibilityRole="button"
-              disabled={checkingIn}
+              disabled={checkingIn !== false}
               onPress={async () => {
-                setCheckingIn(true);
+                setCheckingIn("busy");
                 try {
                   const res = await checkInLeads({});
                   if (res.ok) toast.show(res.message);
@@ -533,12 +534,14 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
                 } catch (error) {
                   toast.error(`Check-in failed: ${error instanceof Error ? error.message : String(error)}`);
                 } finally {
-                  setCheckingIn(false);
+                  // Stay locked a few seconds after the send so it can't fire twice.
+                  setCheckingIn("sent");
+                  setTimeout(() => setCheckingIn(false), CHECK_IN_DEDUPE_MS);
                 }
               }}
               style={[styles.smallButton, checkingIn && { opacity: 0.6 }]}
             >
-              <Text style={styles.text}>{checkingIn ? "Checking in…" : "Check in"}</Text>
+              <Text style={styles.text}>{checkingIn === "busy" ? "Checking in…" : checkingIn === "sent" ? "Sent ✓" : "Check in all"}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"

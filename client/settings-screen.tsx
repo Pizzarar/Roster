@@ -15,6 +15,7 @@ import {
   daysError,
   hoursError,
   limitError,
+  minutesError,
   patternError,
   trackerError,
   trackerName,
@@ -59,6 +60,8 @@ const TEXT_KEYS: readonly TextKey[] = [
   "autoArchiveIntervalHours",
   "autoArchiveAgentDays",
   "autoArchiveWorkspaceDays",
+  "checkInQuietMinutes",
+  "checkInCooldownMinutes",
 ];
 
 const PATTERN_KEYS: readonly TextKey[] = [
@@ -114,6 +117,8 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
     hoursError(draft.values.autoArchiveIntervalHours) !== null ||
     daysError(draft.values.autoArchiveAgentDays) !== null ||
     daysError(draft.values.autoArchiveWorkspaceDays) !== null ||
+    minutesError(draft.values.checkInQuietMinutes) !== null ||
+    minutesError(draft.values.checkInCooldownMinutes) !== null ||
     trackersError(draft.values.trackers);
   const setTrackers = useCallback(
     (update: (trackers: Tracker[]) => Tracker[]) =>
@@ -608,6 +613,22 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
             onChangeText={change("staleWorkspaceDays")}
             disabled={settings.saving}
             error={daysError(draft.values.staleWorkspaceDays)}
+          />
+          <SettingsInput
+            label="Quiet after (minutes)"
+            hint="A lead silent this long shows “quiet Nm” in the sidebar. A running lead is only checked in past this. 0 turns it off."
+            initialValue={draft.values.checkInQuietMinutes}
+            onChangeText={change("checkInQuietMinutes")}
+            disabled={settings.saving}
+            error={minutesError(draft.values.checkInQuietMinutes)}
+          />
+          <SettingsInput
+            label="Check-in cooldown (minutes)"
+            hint="A lead checked in this recently is not pinged again."
+            initialValue={draft.values.checkInCooldownMinutes}
+            onChangeText={change("checkInCooldownMinutes")}
+            disabled={settings.saving}
+            error={minutesError(draft.values.checkInCooldownMinutes)}
           />
         </SettingsCard>
       </SettingsSection>
