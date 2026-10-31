@@ -4,6 +4,11 @@ import { BOARD_SCREEN, OPEN_AGENT_SCREEN, WORKSPACES_SCREEN } from "./client/nav
 import { RosterSettingsScreen } from "./client/settings-screen";
 import { AgentBoardSidebarItem } from "./client/sidebar";
 import { boardStore } from "./client/store";
+import {
+  assistantMessageImageTransformer,
+  timelineImageRendererContribution,
+  toolCallImageTransformer,
+} from "./client/timeline-images";
 import { WorkspacesScreen } from "./client/workspaces-screen";
 import { workspaceStore } from "./client/workspaces";
 import { createBrainstormRpc } from "./shared/brainstorm";
@@ -13,6 +18,9 @@ import { promoteLeadRpc } from "./shared/handoff";
 export default function contribute(client: PluginClientContext) {
   boardStore.start(client.paseo, client.rpc);
   workspaceStore.start(client.paseo);
+  client.addTimelineRenderer(timelineImageRendererContribution);
+  client.addTimelineTransformer(toolCallImageTransformer);
+  client.addTimelineTransformer(assistantMessageImageTransformer);
   client.addScreen({ id: WORKSPACES_SCREEN, title: "Workspaces", Component: WorkspacesScreen });
   client.addScreen({ id: BOARD_SCREEN, title: "Roster", Component: AgentBoardScreen });
   client.addScreen({ id: OPEN_AGENT_SCREEN, title: "Open agent", Component: OpenAgentScreen });

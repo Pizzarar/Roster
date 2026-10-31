@@ -14,6 +14,8 @@ export const DEFAULT_LEAD_PROMPT =
   "Roster: if you are a project lead, set your title to `★ LEAD · <project>` and labels `role=lead,lead=<project>` with Paseo's update_agent tool (or `paseo agent update <PASEO_AGENT_ID> --name ... --label ...`); if you are a worker, set labels `role=worker,lead=<project>,task=<short task name>`. Pass `lead=<project>` on to agents you spawn.";
 export const DEFAULT_LEAD_POINTER =
   "To find a project's current lead: run `paseo ls -g --json` and pick the agent whose cwd matches the project and whose name starts with ★ LEAD (never one starting with (old)).";
+export const DEFAULT_IMAGE_PROMPT =
+  "When sharing a local screenshot or image with the user, embed it inline with Markdown image syntax (![caption](file:///C:/absolute/path/to/image.png) using forward slashes) or read the image file so it renders directly in chat instead of only sending its file path.";
 
 export const trackerSchema = z.object({
   id: z.string(),
@@ -86,6 +88,8 @@ export const rosterSettings = defineSettings({
     leadPrompt: z.string().default(DEFAULT_LEAD_PROMPT),
     leadPointerEnabled: z.boolean().default(true),
     leadPointerPrompt: z.string().default(DEFAULT_LEAD_POINTER),
+    imagePromptEnabled: z.boolean().default(true),
+    imagePrompt: z.string().default(DEFAULT_IMAGE_PROMPT),
   }),
 });
 

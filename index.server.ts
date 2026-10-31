@@ -52,6 +52,9 @@ export default function contribute(server: PluginServerContext) {
     if (handoffs.config.leadPrompt) {
       systemPrompt = appendLine(systemPrompt, handoffs.config.leadPrompt);
     }
+    if (handoffs.config.imagePrompt) {
+      systemPrompt = appendLine(systemPrompt, handoffs.config.imagePrompt);
+    }
     if (systemPrompt === original) return;
     return { ...request, config: { ...request.config, systemPrompt } };
   });

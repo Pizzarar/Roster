@@ -43,6 +43,7 @@ const TEXT_KEYS: readonly TextKey[] = [
   "brainstormRoles",
   "leadPrompt",
   "leadPointerPrompt",
+  "imagePrompt",
   "leadTitlePattern",
   "hideTitlePattern",
   "sidebarStripPattern",
@@ -494,6 +495,20 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
       </SettingsSection>
       <SettingsSection title="Board & workspaces">
         <SettingsCard key={`general-${formKey}`}>
+          <SettingsSwitch
+            label="Ask agents to embed local images inline in chat"
+            hint="Adds the inline-image prompt line below to new agents."
+            value={settings.values.imagePromptEnabled}
+            disabled={settings.saving}
+            onValueChange={toggle("imagePromptEnabled")}
+          />
+          <SettingsInput
+            label="Inline image prompt"
+            hint="System-prompt line telling agents to use ![caption](file:///C:/...) or read the image file."
+            initialValue={draft.values.imagePrompt}
+            onChangeText={change("imagePrompt")}
+            disabled={settings.saving}
+          />
           <SettingsSwitch
             label="Group unlabelled agents by folder"
             hint="Otherwise they share one Unassigned group."

@@ -57,6 +57,7 @@ export interface BoardConfig {
   readonly brainstormPrompt: string;
   readonly leadPrompt: string;
   readonly leadPointerPrompt: string;
+  readonly imagePrompt: string;
 }
 
 export const DEFAULT_SETTINGS: RosterSettings = rosterSettings.schema.parse({});
@@ -227,6 +228,7 @@ export function compileConfig(values: RosterSettings): BoardConfig {
     brainstormPrompt: hasBrainstorm ? (values.brainstormPromptEnabled ? values.brainstormPrompt.trim() : "") : "",
     leadPrompt: hasLeads ? (values.leadPromptEnabled ? values.leadPrompt.trim() : "") : "",
     leadPointerPrompt: hasLeads ? (values.leadPointerEnabled ? values.leadPointerPrompt.trim() : "") : "",
+    imagePrompt: values.imagePromptEnabled ? values.imagePrompt.trim() : "",
   };
 }
 
