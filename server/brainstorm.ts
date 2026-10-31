@@ -1,7 +1,17 @@
 import type { RpcInput } from "@getpaseo/plugin";
 import { execCommand, type PluginServerContext } from "@getpaseo/plugin/server";
-import { resolveProviderAutoMode, type createBrainstormRpc, type renameBrainstormRpc } from "../shared/brainstorm";
-import { AGENT_PAGE_LIMIT, isBrainstormAgent, isLeadAgent, normalizePath, type BoardConfig } from "../shared/config";
+import { checkInLeadsRpc, resolveProviderAutoMode, type createBrainstormRpc, type renameBrainstormRpc } from "../shared/brainstorm";
+import {
+  AGENT_PAGE_LIMIT,
+  isBrainstormAgent,
+  isLeadAgent,
+  isWaitingOnAub,
+  NEEDS_AUB_LABEL,
+  NEEDS_AUB_REASON_LABEL,
+  normalizePath,
+  unhandledNeedsAubReason,
+  type BoardConfig,
+} from "../shared/config";
 
 type PaseoApi = Parameters<Parameters<PluginServerContext["handle"]>[1]>[1]["paseo"];
 type ProviderId = Parameters<PaseoApi["providers"]["listModes"]>[0];
@@ -83,6 +93,7 @@ export async function createBrainstorm(
     projectDisplayName,
     projectRootPath,
     reuseExisting,
+    reason,
   }: RpcInput<typeof createBrainstormRpc>,
   paseo: PaseoApi,
   cfg: BoardConfig,
@@ -92,6 +103,9 @@ export async function createBrainstorm(
   let matchedLead:
     | { id: string; title: string | null; cwd: string; labels?: Record<string, string> }
     | undefined;
+
+  let resolvedLeadId = leadId?.trim();
+  let resolvedLeadTitle = leadTitle?.trim();
 
   if (reuseExisting || !leadId || !area) {
     const listed = await paseo.agents
@@ -106,13 +120,38 @@ export async function createBrainstorm(
       .map((e) => e.agent)
       .filter((a) => !a.archivedAt && a.status !== "closed");
 
+    matchedLead = leadId
+      ? liveAgents.find((a) => a.id === leadId)
+      : liveAgents.find(
+          (a) =>
+            isLeadAgent(a.title, a.labels ?? {}, cfg) &&
+            (normalizePath(a.cwd) === cwdNorm || (rootNorm !== "" && normalizePath(a.cwd) === rootNorm)),
+        );
+
+    resolvedLeadId = leadId?.trim() || matchedLead?.id;
+    resolvedLeadTitle =
+      leadTitle?.trim() ||
+      matchedLead?.title?.trim() ||
+      (matchedLead ? `Agent ${matchedLead.id.slice(0, 7)}` : undefined);
+
     if (reuseExisting) {
-      const existing = liveAgents.find(
-        (a) =>
-          isBrainstormAgent(a.title, a.labels ?? {}, cfg) &&
-          ((workspaceId && a.workspaceId === workspaceId) || normalizePath(a.cwd) === cwdNorm),
-      );
+      const leadKey = matchedLead?.labels?.[cfg.labels.lead]?.trim().toLowerCase();
+      const existing = liveAgents.find((a) => {
+        if (!isBrainstormAgent(a.title, a.labels ?? {}, cfg)) return false;
+        if (workspaceId && a.workspaceId === workspaceId) return true;
+        const aCwd = normalizePath(a.cwd);
+        if (aCwd === cwdNorm || (rootNorm !== "" && aCwd === rootNorm)) return true;
+        const aLeadKey = a.labels?.[cfg.labels.lead]?.trim().toLowerCase();
+        return Boolean(leadKey && aLeadKey && aLeadKey === leadKey);
+      });
       if (existing) {
+        if (reason?.trim()) {
+          const leadDesc = resolvedLeadTitle ? `"${resolvedLeadTitle}" (${resolvedLeadId})` : resolvedLeadId ?? cwd;
+          await paseo.agents
+            .ref(existing.id)
+            .send(`Lead ${leadDesc} needs a decision on: ${reason.trim()}\n\nPlease review and surface this for Aub.`)
+            .catch(() => undefined);
+        }
         return {
           ok: true,
           reused: true,
@@ -121,18 +160,11 @@ export async function createBrainstorm(
         };
       }
     }
-
-    if (!leadId) {
-      matchedLead = liveAgents.find(
-        (a) =>
-          isLeadAgent(a.title, a.labels ?? {}, cfg) &&
-          (normalizePath(a.cwd) === cwdNorm || (rootNorm !== "" && normalizePath(a.cwd) === rootNorm)),
-      );
-    }
   }
 
-  const resolvedLeadId = leadId?.trim() || matchedLead?.id;
-  const resolvedLeadTitle =
+  resolvedLeadId = resolvedLeadId || leadId?.trim() || matchedLead?.id;
+  resolvedLeadTitle =
+    resolvedLeadTitle ||
     leadTitle?.trim() ||
     matchedLead?.title?.trim() ||
     (matchedLead ? `Agent ${matchedLead.id.slice(0, 7)}` : undefined);
@@ -191,9 +223,11 @@ export async function createBrainstorm(
       ? Object.assign(baseConfig, { settings: { shareMcp: "on" } })
       : baseConfig;
 
-  const prompt = resolvedLeadId
-    ? `You are the Brainstorm chat for ${resolvedArea} (${cwd}). Current active lead: "${resolvedLeadTitle}" (${resolvedLeadId}). Riff with Aub here and dispatch or message the lead when approved.`
-    : `You are the Brainstorm chat for ${resolvedArea} (${cwd}). Riff with Aub here and dispatch or start a lead when approved.`;
+  const prompt = reason?.trim()
+    ? `Lead "${resolvedLeadTitle ?? resolvedArea}" (${resolvedLeadId ?? cwd}) needs a decision on: ${reason.trim()}. You are the Brainstorm chat for ${resolvedArea} (${cwd}). Summarize the decision needed for Aub and riff with Aub here, then message the lead when approved.`
+    : resolvedLeadId
+      ? `You are the Brainstorm chat for ${resolvedArea} (${cwd}). Current active lead: "${resolvedLeadTitle}" (${resolvedLeadId}). Riff with Aub here and dispatch or message the lead when approved.`
+      : `You are the Brainstorm chat for ${resolvedArea} (${cwd}). Riff with Aub here and dispatch or start a lead when approved.`;
 
   const handle = await paseo.agents.create({
     cwd,
@@ -208,4 +242,154 @@ export async function createBrainstorm(
     message: `Created ${title} (${matched?.name ?? providerSpec}, ${modeId})`,
     agentId: handle.id,
   };
+}
+
+export async function updateAgentLabels(agentId: string, labels: readonly string[]): Promise<boolean> {
+  const args = ["agent", "update", agentId, ...labels.flatMap((l) => ["--label", l])];
+  for (const command of paseoCandidates()) {
+    try {
+      await execCommand(command, args, { timeout: 30_000 });
+      return true;
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      if (code !== "ENOENT") break;
+    }
+  }
+  return false;
+}
+
+export async function checkInLeads(paseo: PaseoApi, cfg: BoardConfig) {
+  const listed = await paseo.agents
+    .list({
+      includeBackground: true,
+      filter: { includeBackground: true },
+      page: { limit: AGENT_PAGE_LIMIT },
+    })
+    .catch(() => null);
+  const live = (listed?.entries ?? [])
+    .map((e) => e.agent)
+    .filter((a) => !a.archivedAt && a.status !== "closed");
+  const brainstorms = live.filter((a) => isBrainstormAgent(a.title, a.labels ?? {}, cfg));
+  const idleLeads = live.filter((a) => a.status === "idle" && isLeadAgent(a.title, a.labels ?? {}, cfg));
+
+  let prompted = 0;
+  for (const lead of idleLeads) {
+    const leadKey = lead.labels?.[cfg.labels.lead]?.trim().toLowerCase();
+    const leadCwd = normalizePath(lead.cwd);
+    const hasBrainstorm = brainstorms.some((b) => {
+      if (lead.workspaceId && b.workspaceId === lead.workspaceId) return true;
+      if (normalizePath(b.cwd) === leadCwd) return true;
+      const bLeadKey = b.labels?.[cfg.labels.lead]?.trim().toLowerCase();
+      return Boolean(leadKey && bLeadKey && leadKey === bLeadKey);
+    });
+    if (!hasBrainstorm) {
+      try {
+        await paseo.agents
+          .ref(lead.id)
+          .send("Anything for Aub? If yes, set the needs-aub label with a reason; if no, reply 'nothing'.");
+        prompted++;
+      } catch {
+        // ignore send error
+      }
+    }
+  }
+  return {
+    ok: true,
+    count: prompted,
+    message:
+      prompted > 0
+        ? `Checked in with ${prompted} idle lead${prompted === 1 ? "" : "s"}`
+        : "No idle leads without a brainstorm",
+  };
+}
+
+export class NeedsAubWatcher {
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private boundPaseo: PaseoApi | null = null;
+  private readonly inFlight = new Set<string>();
+
+  constructor(private readonly getConfig: () => BoardConfig) {}
+
+  bind(paseo: PaseoApi): void {
+    this.boundPaseo = paseo;
+  }
+
+  start(): () => void {
+    this.timer = setInterval(() => {
+      if (this.boundPaseo) {
+        void this.checkNow(this.boundPaseo).catch((error) =>
+          console.error(`needs-aub check failed: ${error instanceof Error ? error.message : String(error)}`),
+        );
+      }
+    }, 15_000);
+    return () => {
+      if (this.timer) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
+    };
+  }
+
+  async checkNow(paseo?: PaseoApi): Promise<void> {
+    const p = paseo ?? this.boundPaseo;
+    if (!p) return;
+    const cfg = this.getConfig();
+    if (!cfg.needsAubAutoSpawn) return;
+
+    const listed = await p.agents
+      .list({
+        includeBackground: true,
+        filter: { includeBackground: true },
+        page: { limit: AGENT_PAGE_LIMIT },
+      })
+      .catch(() => null);
+    const live = (listed?.entries ?? [])
+      .map((e) => e.agent)
+      .filter((a) => !a.archivedAt && a.status !== "closed");
+    const leads = live.filter((a) => isLeadAgent(a.title, a.labels ?? {}, cfg));
+
+    for (const lead of leads) {
+      const reason = unhandledNeedsAubReason(lead.labels);
+      if (reason && !this.inFlight.has(lead.id)) {
+        this.inFlight.add(lead.id);
+        try {
+          await createBrainstorm(
+            {
+              leadId: lead.id,
+              leadTitle: lead.title ?? undefined,
+              area: leadAreaFromTitle(lead.title, lead.cwd, cfg),
+              cwd: lead.cwd,
+              workspaceId: lead.workspaceId ?? undefined,
+              reuseExisting: true,
+              reason,
+            },
+            p,
+            cfg,
+          );
+          await updateAgentLabels(lead.id, [
+            `${NEEDS_AUB_LABEL}=handled`,
+            `${NEEDS_AUB_REASON_LABEL}=${reason}`,
+          ]);
+        } catch (error) {
+          console.error(
+            `auto-spawn brainstorm for ${lead.id} failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        } finally {
+          this.inFlight.delete(lead.id);
+        }
+      }
+    }
+  }
+
+  async onTurnStarted(agentId: string, paseo: PaseoApi): Promise<void> {
+    const cfg = this.getConfig();
+    const result = await paseo.agents.ref(agentId).refresh().catch(() => null);
+    const agent = result?.agent;
+    if (!agent) return;
+    if (isLeadAgent(agent.title, agent.labels ?? {}, cfg)) {
+      if (agent.labels?.[NEEDS_AUB_LABEL]?.toLowerCase() === "handled") {
+        await updateAgentLabels(agentId, [`${NEEDS_AUB_LABEL}=cleared`]);
+      }
+    }
+  }
 }

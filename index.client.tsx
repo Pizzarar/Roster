@@ -4,15 +4,23 @@ import { BOARD_SCREEN, OPEN_AGENT_SCREEN, WORKSPACES_SCREEN } from "./client/nav
 import { RosterSettingsScreen } from "./client/settings-screen";
 import { AgentBoardSidebarItem } from "./client/sidebar";
 import { boardStore } from "./client/store";
+import {
+  assistantMessageImageTransformer,
+  timelineImageRendererContribution,
+  toolCallImageTransformer,
+} from "./client/timeline-images";
 import { WorkspacesScreen } from "./client/workspaces-screen";
 import { workspaceStore } from "./client/workspaces";
-import { createBrainstormRpc } from "./shared/brainstorm";
+import { checkInLeadsRpc, createBrainstormRpc } from "./shared/brainstorm";
 import { DEFAULT_CONFIG, isBrainstormAgent, normalizePath } from "./shared/config";
 import { promoteLeadRpc } from "./shared/handoff";
 
 export default function contribute(client: PluginClientContext) {
   boardStore.start(client.paseo, client.rpc);
   workspaceStore.start(client.paseo);
+  client.addTimelineRenderer(timelineImageRendererContribution);
+  client.addTimelineTransformer(toolCallImageTransformer);
+  client.addTimelineTransformer(assistantMessageImageTransformer);
   client.addScreen({ id: WORKSPACES_SCREEN, title: "Workspaces", Component: WorkspacesScreen });
   client.addScreen({ id: BOARD_SCREEN, title: "Roster", Component: AgentBoardScreen });
   client.addScreen({ id: OPEN_AGENT_SCREEN, title: "Open agent", Component: OpenAgentScreen });
@@ -88,6 +96,27 @@ export default function contribute(client: PluginClientContext) {
       if (result.agentId) {
         openScreen({ screenId: OPEN_AGENT_SCREEN, params: { agentId: result.agentId } });
       }
+    },
+  });
+  client.addSlashCommand({
+    name: "check-in",
+    description: "Ask idle leads without a brainstorm if they have anything for Aub",
+    argumentHint: "",
+    context: "workspace",
+    async onSubmit({ rpc }) {
+      const result = await rpc(checkInLeadsRpc, {});
+      if (!result.ok) throw new Error(result.message);
+    },
+  });
+  client.addCommandCenterItem({
+    id: "check-in-leads",
+    title: "Roster: check in with idle leads",
+    icon: "MessageSquare",
+    context: "global",
+    keywords: ["needs-aub", "waiting", "leads", "brainstorm", "check in"],
+    async onSelect({ rpc }) {
+      const result = await rpc(checkInLeadsRpc, {});
+      if (!result.ok) throw new Error(result.message);
     },
   });
   return async () => {

@@ -2,7 +2,7 @@ import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { Icon, SidebarRow } from "@getpaseo/plugin/client/ui";
 import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import type { TrackerConfig } from "../shared/config";
+import { isWaitingOnAub, type TrackerConfig } from "../shared/config";
 import { useBoardConfig } from "./config";
 import { agentKind, analyzeBrainstormCoverage, compareAgents, isTracked, sidebarTitle, type BoardAgent } from "./model";
 import { BOARD_SCREEN, OPEN_AGENT_SCREEN, WORKSPACES_SCREEN, navigationOf } from "./navigation";
@@ -119,11 +119,13 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
     });
 
   const row = (agent: BoardAgent, sectionId: string) => {
+    const waitingOnAub = agentKind(agent, cfg) === "lead" && isWaitingOnAub(agent.labels);
     const attention = attentionLabel(agent);
     const subagents = subagentLabel(board.subagents.get(agent.id));
     const trailing =
-      attention || subagents ? (
+      waitingOnAub || attention || subagents ? (
         <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
+          {waitingOnAub ? <Chip theme={theme} label="🙋 waiting on you" tone="warning" /> : null}
           {subagents ? <Chip theme={theme} label={subagents} tone="accent" /> : null}
           {attention ? (
             <Chip theme={theme} label="!" tone={agent.attentionReason === "error" ? "danger" : "warning"} />
@@ -218,6 +220,13 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
             <Text style={styles.sectionTitle} numberOfLines={1}>
               Leads
             </Text>
+            {leads.filter((agent) => isWaitingOnAub(agent.labels)).length > 0 ? (
+              <Chip
+                theme={theme}
+                label={`🙋 Waiting on you (${leads.filter((agent) => isWaitingOnAub(agent.labels)).length})`}
+                tone="warning"
+              />
+            ) : null}
             {leads.some((agent) => agent.requiresAttention) ? <Chip theme={theme} label="!" tone="warning" /> : null}
             <Text style={styles.muted}>{leads.length}</Text>
           </View>
