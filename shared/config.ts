@@ -1,5 +1,5 @@
 import { rosterSettings, type GuidanceRule, type RosterSettings, type Tracker, type TrackerKind } from "./settings";
-import { normalizePath } from "./match";
+import { isRetiredTitle, normalizePath } from "./match";
 import { minutesError } from "./check-in";
 import { parseGroupOrder } from "./groups";
 
@@ -174,11 +174,38 @@ export function isLeadAgent(
   cfg: BoardConfig,
 ): boolean {
   const text = title ?? "";
-  if (cfg.hideTitle?.test(text)) return false;
+  if (isRetiredTitle(text) || cfg.hideTitle?.test(text)) return false;
   const role = labels[cfg.labels.role];
   const known = [...cfg.leadRoles, ...cfg.oldLeadRoles, ...cfg.brainstormRoles];
   if (role !== undefined && known.includes(role)) return cfg.leadRoles.includes(role);
   return cfg.leadTitle?.test(text) ?? false;
+}
+
+/** A lead now, or one retired by an "(old)" title, hideTitle or an old-lead role: its workers may be adopted. */
+export function wasLeadAgent(
+  title: string | null | undefined,
+  labels: Readonly<Record<string, string>>,
+  cfg: BoardConfig,
+): boolean {
+  if (isLeadAgent(title, labels, cfg) || isRetiredTitle(title) || cfg.hideTitle?.test(title ?? "")) return true;
+  const role = labels[cfg.labels.role];
+  return role !== undefined && cfg.oldLeadRoles.includes(role);
+}
+
+/**
+ * The project a lead title names: "★ LEAD · PLUGINS (Claude) ord6" -> "PLUGINS". Every parenthetical and
+ * the ordN token go, wherever they sit. Falls back to the folder name. Server and client must agree on this.
+ */
+export function leadAreaFromTitle(title: string | null | undefined, cwd: string, cfg: BoardConfig): string {
+  const raw = title?.trim() || "";
+  const stripped = (cfg.sidebarStrip ? raw.replace(cfg.sidebarStrip, "") : raw)
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\bord\d+\b/gi, " ")
+    .trim()
+    .replace(/^★?\s*LEAD\s*[·:-]?\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return stripped || cwd.split(/[\\/]+/).filter(Boolean).pop() || cwd;
 }
 
 /** Whether an agent is a brainstorm: a brainstorm role, else a brainstorm title. Leads and retired titles never count. */
@@ -187,7 +214,7 @@ export function isBrainstormAgent(
   labels: Readonly<Record<string, string>>,
   cfg: BoardConfig,
 ): boolean {
-  if (isLeadAgent(title, labels, cfg) || cfg.hideTitle?.test(title ?? "")) return false;
+  if (isLeadAgent(title, labels, cfg) || isRetiredTitle(title) || cfg.hideTitle?.test(title ?? "")) return false;
   const role = labels[cfg.labels.role];
   if (role !== undefined && cfg.brainstormRoles.includes(role)) return true;
   if (role !== undefined && (cfg.leadRoles.includes(role) || cfg.oldLeadRoles.includes(role))) return false;

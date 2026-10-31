@@ -1,5 +1,7 @@
 import {
   isLeadAgent,
+  isRetiredTitle,
+  leadAreaFromTitle,
   isHandSnoozed,
   isLeadAwaitingAub,
   pairLeadsWithBrainstorms,
@@ -37,7 +39,7 @@ export type AgentKind = "lead" | "old-lead" | "brainstorm" | "worker";
 export function agentKind(agent: BoardAgent, cfg: BoardConfig): AgentKind {
   const title = agent.title ?? "";
   const role = agent.labels[cfg.labels.role];
-  if (cfg.hideTitle?.test(title)) return "old-lead";
+  if (isRetiredTitle(title) || cfg.hideTitle?.test(title)) return "old-lead";
   if (role !== undefined) {
     if (cfg.leadRoles.includes(role)) return "lead";
     if (cfg.oldLeadRoles.includes(role)) return "old-lead";
@@ -77,13 +79,7 @@ export function sidebarTitle(agent: BoardAgent, cfg: BoardConfig): string {
 }
 
 export function leadArea(lead: BoardAgent, cfg: BoardConfig): string {
-  const title = sidebarTitle(lead, cfg);
-  const stripped = title
-    .replace(/^★?\s*LEAD\s*[·:-]?\s*/i, "")
-    .replace(/\s*\([^)]*\)\s*$/g, "")
-    .replace(/\s+\bord\d+\b.*$/i, "")
-    .trim();
-  return stripped || basename(lead.cwd);
+  return leadAreaFromTitle(displayTitle(lead), lead.cwd, cfg);
 }
 
 /** Display/ordering time only (never used to decide whether a flag is answered). */
