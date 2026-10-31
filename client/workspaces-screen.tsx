@@ -3,13 +3,26 @@ import { copyText, ScrollView, TextInput, useToast } from "@getpaseo/plugin/clie
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { autoArchiveStateRpc, runAutoArchiveRpc, undoAutoArchiveRpc, type AutoArchiveState } from "../shared/auto-archive";
+import { createBrainstormRpc } from "../shared/brainstorm";
 import { checkWorkspaceMergesRpc } from "../shared/workspaces";
-import { makeStyles, Toggle, type Styles } from "./board";
-import type { BoardConfig } from "../shared/config";
+import { makeStyles, Toggle, useAgentProfiles, type Styles } from "./board";
+import { normalizePath, type BoardConfig } from "../shared/config";
 import { useBoardConfig } from "./config";
-import { agentKind, relativeTime } from "./model";
+import { agentKind, basename, displayTitle, leadArea, relativeTime, sidebarTitle, type BoardAgent } from "./model";
 import { useBoard, useNow } from "./store";
-import { Chip, ConfirmButton, StatusDot } from "./ui";
+import { Chip, ConfirmButton, StatusDot, statusColor } from "./ui";
+
+interface BrainstormTarget {
+  key: string;
+  label: string;
+  area: string;
+  cwd: string;
+  leadId?: string;
+  leadTitle?: string;
+  workspaceId?: string;
+  projectDisplayName?: string;
+  activityAt: string;
+}
 import {
   agentsByWorkspace,
   cleanupVerdict,
@@ -170,6 +183,12 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
   const [undoBusy, setUndoBusy] = useState(false);
   const [autoState, setAutoState] = useState<AutoArchiveState | null>(null);
   const [showAutoLog, setShowAutoLog] = useState(false);
+  const createRpc = useRpc(createBrainstormRpc);
+  const profiles = useAgentProfiles();
+  const [selectedTargetKey, setSelectedTargetKey] = useState<string | null>(null);
+  const [showProjectPicker, setShowProjectPicker] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [creatingBrainstorm, setCreatingBrainstorm] = useState(false);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<WorkspaceSort>("cleanup");
   const [filter, setFilter] = useState<Filter>("all");
@@ -324,6 +343,105 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
       );
   };
 
+  const targets = useMemo(() => {
+    const liveLeads = [...board.agents.values()].filter(
+      (a) => !a.archivedAt && a.status !== "closed" && agentKind(a, cfg) === "lead",
+    );
+    const leadTargets: BrainstormTarget[] = liveLeads.map((lead) => {
+      const area = leadArea(lead, cfg);
+      return {
+        key: `lead:${lead.id}`,
+        label: `★ ${area} (${basename(lead.cwd)})`,
+        area,
+        cwd: lead.cwd,
+        leadId: lead.id,
+        leadTitle: displayTitle(lead),
+        activityAt: lead.updatedAt,
+      };
+    });
+
+    const leadCwds = new Set(leadTargets.map((t) => normalizePath(t.cwd)));
+    const leadProjects = new Set(leadTargets.map((t) => t.area.toLowerCase()));
+
+    const byProj = new Map<string, WorkspaceRow[]>();
+    for (const row of rows) {
+      const proj = row.workspace.project;
+      const list = byProj.get(proj);
+      if (list) list.push(row);
+      else byProj.set(proj, [row]);
+    }
+
+    const wsTargets: BrainstormTarget[] = [];
+    for (const [project, projRows] of byProj.entries()) {
+      const sortedRows = [...projRows].sort((a, b) => {
+        const aTime = a.workspace.activityAt ?? a.workspace.createdAt ?? "";
+        const bTime = b.workspace.activityAt ?? b.workspace.createdAt ?? "";
+        return bTime.localeCompare(aTime);
+      });
+      const topRow = sortedRows[0];
+      if (!topRow) continue;
+      const normCwd = normalizePath(topRow.workspace.directory);
+      if (leadCwds.has(normCwd) || leadProjects.has(project.toLowerCase())) {
+        continue;
+      }
+      wsTargets.push({
+        key: `ws:${topRow.workspace.id}`,
+        label: `${topRow.workspace.project} (${topRow.workspace.name})`,
+        area: topRow.workspace.project,
+        cwd: topRow.workspace.directory,
+        workspaceId: topRow.workspace.id,
+        projectDisplayName: topRow.workspace.project,
+        activityAt: topRow.workspace.activityAt ?? topRow.workspace.createdAt ?? "",
+      });
+    }
+
+    return [...leadTargets, ...wsTargets].sort((a, b) => b.activityAt.localeCompare(a.activityAt));
+  }, [board.agents, rows, cfg]);
+
+  const selectedTarget = useMemo(
+    () => targets.find((t) => t.key === selectedTargetKey) ?? targets[0],
+    [targets, selectedTargetKey],
+  );
+
+  const liveBrainstorms = useMemo(
+    () =>
+      [...board.agents.values()].filter(
+        (a) => !a.archivedAt && a.status !== "closed" && agentKind(a, cfg) === "brainstorm",
+      ),
+    [board.agents, cfg],
+  );
+
+  const spawnBrainstorm = async (target?: BrainstormTarget, profileId?: string) => {
+    if (!target) return;
+    setCreatingBrainstorm(true);
+    try {
+      const res = await createRpc({
+        leadId: target.leadId,
+        leadTitle: target.leadTitle,
+        area: target.area,
+        cwd: target.cwd,
+        workspaceId: target.workspaceId,
+        workspaceName: target.workspaceId ? target.label : undefined,
+        projectDisplayName: target.projectDisplayName,
+        profile: profileId || cfg.brainstormProfile || undefined,
+        modeId: cfg.brainstormModeId || "auto",
+        reuseExisting: true,
+      });
+      if (res.ok) {
+        toast.show(res.message);
+        if (res.agentId && navigation) {
+          navigation.openAgent({ agentId: res.agentId });
+        }
+      } else {
+        toast.error(res.message);
+      }
+    } catch (error) {
+      toast.error(`Create failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setCreatingBrainstorm(false);
+    }
+  };
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={{ gap: 4 }}>
@@ -350,6 +468,128 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
           </Pressable>
         ) : null}
       </View>
+
+      {cfg.brainstormPreset ? (
+        <View style={styles.group}>
+          <View style={[styles.row, { flexWrap: "wrap", justifyContent: "space-between" }]}>
+            <Text style={[styles.text, { fontWeight: "600" }]}>Brainstorm</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setShowProjectPicker((v) => !v)}
+              style={styles.smallButton}
+            >
+              <Text style={styles.text}>{selectedTarget ? selectedTarget.label : "Select project"} ▾</Text>
+            </Pressable>
+            <View style={{ flex: 1 }} />
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+              <Pressable
+                accessibilityRole="button"
+                disabled={creatingBrainstorm || !selectedTarget}
+                onPress={() => void spawnBrainstorm(selectedTarget)}
+                style={[
+                  styles.smallButton,
+                  { backgroundColor: theme.colors.accent, borderColor: theme.colors.accent },
+                  (creatingBrainstorm || !selectedTarget) && { opacity: 0.6 },
+                ]}
+              >
+                <Text style={{ color: theme.colors.accentForeground, fontWeight: "600", fontSize: 14 }}>
+                  {creatingBrainstorm ? "Creating…" : "Create brainstorm"}
+                </Text>
+              </Pressable>
+              {profiles.length > 0 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setShowProfileMenu((v) => !v)}
+                  style={[styles.smallButton, { borderColor: theme.colors.accent }]}
+                >
+                  <Text style={{ color: theme.colors.accent, fontWeight: "600", fontSize: 14 }}>▾</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+          {showProjectPicker && targets.length > 0 ? (
+            <View>
+              <View style={styles.divider} />
+              <View style={[styles.row, { flexWrap: "wrap", gap: 6 }]}>
+                {targets.map((target) => {
+                  const isSelected = target.key === selectedTarget?.key;
+                  return (
+                    <Pressable
+                      key={target.key}
+                      accessibilityRole="button"
+                      onPress={() => {
+                        setSelectedTargetKey(target.key);
+                        setShowProjectPicker(false);
+                      }}
+                      style={[
+                        styles.smallButton,
+                        isSelected && { backgroundColor: theme.colors.surface2, borderColor: theme.colors.accent },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.text,
+                          isSelected && { color: theme.colors.accent, fontWeight: "600" },
+                        ]}
+                      >
+                        {target.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
+          {showProfileMenu && profiles.length > 0 ? (
+            <View>
+              <View style={styles.divider} />
+              <View style={[styles.row, { flexWrap: "wrap", gap: 6 }]}>
+                {profiles.map((p) => (
+                  <Pressable
+                    key={p.id}
+                    accessibilityRole="button"
+                    onPress={() => {
+                      setShowProfileMenu(false);
+                      void spawnBrainstorm(selectedTarget, p.id);
+                    }}
+                    style={styles.smallButton}
+                  >
+                    <Text style={styles.text}>{p.name}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+          {liveBrainstorms.length > 0 ? (
+            <View>
+              <View style={styles.divider} />
+              <View style={[styles.row, { flexWrap: "wrap", gap: 6 }]}>
+                <Text style={styles.muted}>Active:</Text>
+                {liveBrainstorms.map((b) => (
+                  <Pressable
+                    key={b.id}
+                    accessibilityRole="button"
+                    onPress={() => {
+                      if (navigation) navigation.openAgent({ agentId: b.id });
+                      else
+                        copyText(b.id).then(
+                          () => toast.show("Brainstorm id copied"),
+                          () => toast.error(`Could not copy: ${b.id}`),
+                        );
+                    }}
+                    style={[styles.smallButton, { flexDirection: "row", alignItems: "center", gap: 6 }]}
+                  >
+                    <StatusDot color={statusColor(theme, b.status)} />
+                    <Text style={[styles.text, { flexShrink: 1 }]} numberOfLines={1}>
+                      Open {sidebarTitle(b, cfg)}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
 
       <View style={styles.group}>
         <View style={[styles.row, { flexWrap: "wrap", justifyContent: "space-between" }]}>
