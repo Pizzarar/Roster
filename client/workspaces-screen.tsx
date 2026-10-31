@@ -6,7 +6,8 @@ import { autoArchiveStateRpc, runAutoArchiveRpc, undoAutoArchiveRpc, type AutoAr
 import { checkInLeadsRpc, createBrainstormRpc } from "../shared/brainstorm";
 import { checkWorkspaceMergesRpc } from "../shared/workspaces";
 import { makeStyles, Toggle, useAgentProfiles, type Styles } from "./board";
-import { isWaitingOnAub, normalizePath, type BoardConfig } from "../shared/config";
+import { isWaitingOnAub, matchBrainstormForLead, normalizePath, type BoardConfig } from "../shared/config";
+import { BrainstormChip, useLeadBrainstorm } from "./brainstorm-link";
 import { useBoardConfig } from "./config";
 import { agentKind, basename, displayTitle, leadArea, relativeTime, sidebarTitle, type BoardAgent } from "./model";
 import { useBoard, useNow } from "./store";
@@ -82,6 +83,7 @@ function WorkspaceRowView({
   onToggle,
   onOpen,
   onArchive,
+  leadBrainstorm,
 }: {
   row: WorkspaceRow;
   now: number;
@@ -92,6 +94,8 @@ function WorkspaceRowView({
   onToggle(id: string): void;
   onOpen(row: WorkspaceRow): void;
   onArchive(row: WorkspaceRow): Promise<void>;
+  /** Present when brainstorms are linked and this workspace has a lead. */
+  leadBrainstorm?: { exists: boolean; busy: boolean; onPress(): void };
 }) {
   const { workspace, verdict } = row;
   const isMerged = workspace.merged || workspace.pr?.merged === true;
@@ -124,6 +128,9 @@ function WorkspaceRowView({
           </Text>
           {lead ? <Chip theme={theme} label="★ lead" tone="accent" /> : null}
           {waitingOnAub ? <Chip theme={theme} label="🙋 waiting on you" tone="warning" /> : null}
+          {leadBrainstorm ? (
+            <BrainstormChip theme={theme} exists={leadBrainstorm.exists} busy={leadBrainstorm.busy} onPress={leadBrainstorm.onPress} />
+          ) : null}
           {workspace.kind !== "worktree" ? <Chip theme={theme} label={workspace.kind.replace("_", " ")} /> : null}
           {workspace.pinned ? <Chip theme={theme} label="pinned" tone="accent" /> : null}
           {workspace.dirty ? <Chip theme={theme} label="uncommitted" tone="danger" /> : null}
@@ -180,6 +187,7 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
   const now = useNow();
   const checkMerges = useRpc(checkWorkspaceMergesRpc);
   const checkInLeads = useRpc(checkInLeadsRpc);
+  const { openOrCreate, busyLeadId } = useLeadBrainstorm((agentId) => navigation?.openAgent({ agentId }));
   const [checkingIn, setCheckingIn] = useState(false);
   const waitingLeads = useMemo(
     () =>
@@ -786,7 +794,13 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
         }
         const idleOpen = expandedIdle.has(section.key);
         const safeRows = section.rows.filter((r) => r.verdict.kind === "candidate");
-        const renderRow = (row: WorkspaceRow, divider: boolean) => (
+        const renderRow = (row: WorkspaceRow, divider: boolean) => {
+          const lead =
+            cfg.linkBrainstorms && cfg.brainstormPreset
+              ? row.agents.find((a) => !a.archivedAt && a.status !== "closed" && agentKind(a, cfg) === "lead")
+              : undefined;
+          const brainstorm = lead ? matchBrainstormForLead(lead, liveBrainstorms, cfg) : undefined;
+          return (
           <View key={row.workspace.id}>
             {divider ? <View style={styles.divider} /> : null}
             <WorkspaceRowView
@@ -799,9 +813,15 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
               onToggle={toggleRow}
               onOpen={open}
               onArchive={archive}
+              leadBrainstorm={
+                lead
+                  ? { exists: brainstorm !== undefined, busy: busyLeadId === lead.id, onPress: () => void openOrCreate(lead, brainstorm) }
+                  : undefined
+              }
             />
           </View>
-        );
+          );
+        };
         return (
           <View key={section.key} style={styles.group}>
             {section.title ? (

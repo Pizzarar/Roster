@@ -37,6 +37,7 @@ export interface BoardConfig {
   readonly groupUnassignedByFolder: boolean;
   readonly showStopButton: boolean;
   readonly countSubagents: boolean;
+  readonly linkBrainstorms: boolean;
   readonly detachNewLeads: boolean;
   readonly adoptWorkers: boolean;
   readonly relayWorkerEvents: boolean;
@@ -239,6 +240,7 @@ export function compileConfig(values: RosterSettings): BoardConfig {
     groupUnassignedByFolder: values.groupUnassignedByFolder,
     showStopButton: values.showStopButton,
     countSubagents: values.countSubagents,
+    linkBrainstorms: values.linkBrainstorms,
     detachNewLeads: hasLeads ? values.detachNewLeads : false,
     adoptWorkers: hasLeads ? values.adoptWorkers : false,
     relayWorkerEvents: hasLeads ? values.relayWorkerEvents : false,
@@ -266,3 +268,29 @@ export function compileConfig(values: RosterSettings): BoardConfig {
 }
 
 export const DEFAULT_CONFIG: BoardConfig = compileConfig(DEFAULT_SETTINGS);
+
+export interface MatchableAgent {
+  readonly labels?: Readonly<Record<string, string>>;
+  readonly workspaceId?: string;
+  readonly cwd: string;
+}
+
+/** Match a brainstorm to a lead: `lead=<key>` label first, then workspaceId, then normalized cwd. */
+export function matchBrainstormForLead<T extends MatchableAgent>(
+  lead: MatchableAgent,
+  brainstorms: readonly T[],
+  cfg: Pick<BoardConfig, "labels">,
+): T | undefined {
+  const key = (agent: MatchableAgent) => agent.labels?.[cfg.labels.lead]?.trim().toLowerCase();
+  const leadKey = key(lead);
+  if (leadKey) {
+    const byKey = brainstorms.find((b) => key(b) === leadKey);
+    if (byKey) return byKey;
+  }
+  if (lead.workspaceId) {
+    const byWs = brainstorms.find((b) => b.workspaceId === lead.workspaceId);
+    if (byWs) return byWs;
+  }
+  const leadCwd = normalizePath(lead.cwd);
+  return brainstorms.find((b) => normalizePath(b.cwd) === leadCwd);
+}

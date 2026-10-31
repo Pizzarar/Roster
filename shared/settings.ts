@@ -82,6 +82,7 @@ export const rosterSettings = defineSettings({
     groupUnassignedByFolder: z.boolean().default(true),
     showStopButton: z.boolean().default(true),
     countSubagents: z.boolean().default(true),
+    linkBrainstorms: z.boolean().default(true),
     /** Detach a new lead from the agent that spawned it. */
     detachNewLeads: z.boolean().default(true),
     /** On a handoff, move the old lead's live workers under the new lead. */

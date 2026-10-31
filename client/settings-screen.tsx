@@ -580,6 +580,13 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
             disabled={settings.saving}
             onValueChange={toggle("countSubagents")}
           />
+          <SettingsSwitch
+            label="Link brainstorms to leads"
+            hint="Shows a 💬 chip on each lead instead of a separate Brainstorm section. Turn off to show that section again."
+            value={settings.values.linkBrainstorms}
+            disabled={settings.saving}
+            onValueChange={toggle("linkBrainstorms")}
+          />
           <SettingsInput
             label="Role label key"
             hint="Label whose value says lead, worker, and so on."

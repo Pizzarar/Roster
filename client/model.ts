@@ -1,6 +1,7 @@
 import {
   isLeadAgent,
   isWaitingOnAub,
+  matchBrainstormForLead,
   NEEDS_AUB_AT_LABEL,
   needsAubReasonText,
   normalizePath,
@@ -81,25 +82,6 @@ export function leadArea(lead: BoardAgent, cfg: BoardConfig): string {
     .replace(/\s+\bord\d+\b.*$/i, "")
     .trim();
   return stripped || basename(lead.cwd);
-}
-
-/** Match a brainstorm to a lead by `lead=<key>` label first, then by workspaceId or normalized cwd. */
-export function matchBrainstormForLead(
-  lead: BoardAgent,
-  brainstorms: readonly BoardAgent[],
-  cfg: BoardConfig,
-): BoardAgent | undefined {
-  const leadKey = lead.labels[cfg.labels.lead]?.trim().toLowerCase();
-  if (leadKey) {
-    const byKey = brainstorms.find((b) => b.labels[cfg.labels.lead]?.trim().toLowerCase() === leadKey);
-    if (byKey) return byKey;
-  }
-  if (lead.workspaceId) {
-    const byWs = brainstorms.find((b) => b.workspaceId === lead.workspaceId);
-    if (byWs) return byWs;
-  }
-  const leadCwd = normalizePath(lead.cwd);
-  return brainstorms.find((b) => normalizePath(b.cwd) === leadCwd);
 }
 
 /** Live brainstorms that do not match any live lead. */

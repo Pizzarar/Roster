@@ -6,6 +6,7 @@ import {
   isBrainstormAgent,
   isLeadAgent,
   isWaitingOnAub,
+  matchBrainstormForLead,
   NEEDS_AUB_AT_LABEL,
   NEEDS_AUB_LABEL,
   NEEDS_AUB_REASON_LABEL,
@@ -382,14 +383,7 @@ export class NeedsAubWatcher {
           this.inFlight.delete(lead.id);
         }
       } else if (lead.labels?.[NEEDS_AUB_LABEL]?.toLowerCase() === "handled") {
-        const leadKey = lead.labels?.[cfg.labels.lead]?.trim().toLowerCase();
-        const leadCwd = normalizePath(lead.cwd);
-        const brainstorm = brainstorms.find((b) => {
-          const bLeadKey = b.labels?.[cfg.labels.lead]?.trim().toLowerCase();
-          if (leadKey && bLeadKey && leadKey === bLeadKey) return true;
-          if (lead.workspaceId && b.workspaceId === lead.workspaceId) return true;
-          return normalizePath(b.cwd) === leadCwd;
-        });
+        const brainstorm = matchBrainstormForLead(lead, brainstorms, cfg);
         if (brainstorm?.lastUserMessageAt) {
           const userMs = Date.parse(brainstorm.lastUserMessageAt);
           const flagMs = Date.parse(lead.labels?.[NEEDS_AUB_AT_LABEL] ?? lead.updatedAt ?? "");
