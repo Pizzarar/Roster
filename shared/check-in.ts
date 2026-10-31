@@ -2,6 +2,9 @@
 
 /** Lead label holding the ISO time Roster last checked in; durable across plugin reloads. */
 export const CHECK_IN_AT_LABEL = "roster-checkin-at";
+/** Lead labels holding the last check-in reply (truncated) and when it arrived; set only when the lead has no brainstorm. */
+export const CHECK_IN_REPLY_LABEL = "roster-checkin-reply";
+export const CHECK_IN_REPLY_AT_LABEL = "roster-checkin-reply-at";
 
 export interface CheckInLead {
   readonly id: string;

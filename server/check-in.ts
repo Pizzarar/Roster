@@ -5,6 +5,8 @@ import {
   CHECK_IN_AT_LABEL,
   CHECK_IN_DEDUPE_MS,
   CHECK_IN_PROMPT,
+  CHECK_IN_REPLY_AT_LABEL,
+  CHECK_IN_REPLY_LABEL,
   isBrainstormAgent,
   isLeadAgent,
   pairLeadsWithBrainstorms,
@@ -14,8 +16,6 @@ import {
   type BoardConfig,
 } from "../shared/config";
 
-/** How long the RPC waits for replies before returning; late replies still get routed to their brainstorm. */
-const REPLY_WAIT_MS = 60_000;
 /** A pending check-in whose turn never ended is forgotten after this long. */
 const PENDING_MAX_MS = 30 * 60_000;
 const REPLY_CHARS = 280;
@@ -23,34 +23,40 @@ const REPLY_CHARS = 280;
 interface Pending {
   readonly sentAt: number;
   readonly title: string;
-  readonly brainstormId: string | undefined;
-  readonly settle: (reply: string | null) => void;
 }
 
 const minutes = (ms: number) => `${Math.max(1, Math.round(ms / 60_000))}m`;
 
 /**
- * Check in with live leads. The reply is captured from the agent.turn_ended hook, not by polling: when the lead's
- * turn ends, the last assistant message since the prompt is read from its timeline and sent to the project's
- * brainstorm (marked as a Roster prompt). Leads with no brainstorm get their reply in the RPC result, if it
- * arrives within REPLY_WAIT_MS.
+ * Check in with live leads. The RPC returns right after sending. The reply is captured from the
+ * agent.turn_ended hook: when the lead's turn ends, the last assistant message since the prompt is read from its
+ * timeline and sent to the lead's current brainstorm (marked as a Roster prompt). With no brainstorm, the
+ * truncated reply is written to the lead's `roster-checkin-reply` label for the Workspaces screen.
  */
 export class CheckIns {
   private readonly pending = new Map<string, Pending>();
-  /** Lead id -> when we last sent a check-in; reserved synchronously after selection so concurrent runs can't both send. */
+  /** Lead id -> when we last sent a check-in; stamped synchronously right before each send. */
   private readonly recentSentAt = new Map<string, number>();
 
   constructor(private readonly getConfig: () => BoardConfig) {}
 
-  async run(paseo: PaseoApi, onlyLeadId?: string) {
-    const cfg = this.getConfig();
+  private async liveLeadsAndBrainstorms(paseo: PaseoApi, cfg: BoardConfig) {
     const listed = await paseo.agents
       .list({ includeBackground: true, filter: { includeBackground: true }, page: { limit: AGENT_PAGE_LIMIT } })
       .catch(() => null);
-    if (!listed) return { ok: false, count: 0, message: "Could not list agents" };
+    if (!listed) return null;
     const live = listed.entries.map((e) => e.agent).filter((a) => !a.archivedAt && a.status !== "closed");
-    const leads = live.filter((a) => isLeadAgent(a.title, a.labels ?? {}, cfg));
-    const brainstorms = live.filter((a) => isBrainstormAgent(a.title, a.labels ?? {}, cfg));
+    return {
+      leads: live.filter((a) => isLeadAgent(a.title, a.labels ?? {}, cfg)),
+      brainstorms: live.filter((a) => isBrainstormAgent(a.title, a.labels ?? {}, cfg)),
+    };
+  }
+
+  async run(paseo: PaseoApi, onlyLeadId?: string) {
+    const cfg = this.getConfig();
+    const found = await this.liveLeadsAndBrainstorms(paseo, cfg);
+    if (!found) return { ok: false, count: 0, message: "Could not list agents" };
+    const { leads, brainstorms } = found;
     const { pairs } = pairLeadsWithBrainstorms(leads, brainstorms, cfg);
     const now = Date.now();
     for (const [id, at] of this.recentSentAt) if (now - at > CHECK_IN_DEDUPE_MS) this.recentSentAt.delete(id);
@@ -64,23 +70,24 @@ export class CheckIns {
       recentSentAt: this.recentSentAt,
       onlyLeadId,
     });
-    for (const { lead } of picks) this.recentSentAt.set(lead.id, now);
     const nameOf = (id: string) => {
       const lead = leads.find((l) => l.id === id);
       return lead ? leadAreaFromTitle(lead.title, lead.cwd, cfg) : id.slice(0, 8);
     };
 
-    const sent: { name: string; reply: Promise<string | null>; routed: boolean }[] = [];
+    const sent: string[] = [];
     const notes: string[] = [];
-    for (const { lead, brainstorm } of picks) {
+    for (const { lead } of picks) {
       const name = nameOf(lead.id);
-      if (this.pending.has(lead.id)) {
-        notes.push(`${name} (awaiting reply)`);
+      // Selection ran before earlier sends awaited, so another run may have reserved this lead since. Re-check and
+      // stamp in one synchronous step, before the send's await.
+      const last = this.recentSentAt.get(lead.id);
+      if (this.pending.has(lead.id) || (last !== undefined && Date.now() - last < CHECK_IN_DEDUPE_MS)) {
+        notes.push(`${name} (just checked in)`);
         continue;
       }
-      const reply = new Promise<string | null>((settle) => {
-        this.pending.set(lead.id, { sentAt: now, title: name, brainstormId: brainstorm?.id, settle });
-      });
+      this.recentSentAt.set(lead.id, Date.now());
+      this.pending.set(lead.id, { sentAt: now, title: name });
       try {
         await paseo.agents
           .ref(lead.id)
@@ -90,12 +97,13 @@ export class CheckIns {
           );
       } catch {
         this.pending.delete(lead.id);
+        this.recentSentAt.delete(lead.id);
         notes.push(`${name} (send failed)`);
         continue;
       }
-      // Stamped after the send so a failed send doesn't burn the cooldown; `pending` covers the gap.
+      // Stamped after the send so a failed send doesn't burn the cooldown; `recentSentAt` covers the gap.
       await updateAgentLabels(lead.id, { [CHECK_IN_AT_LABEL]: new Date(now).toISOString() });
-      sent.push({ name, reply, routed: brainstorm !== undefined });
+      sent.push(name);
     }
     for (const { id, reason } of skipped) {
       const lead = leads.find((l) => l.id === id);
@@ -104,34 +112,30 @@ export class CheckIns {
           ? "busy, skipped"
           : reason === "duplicate"
             ? "just checked in"
-          : reason === "cooldown"
-            ? `checked in ${minutes(lead ? sinceCheckInMs(lead, now) : 0)} ago`
-            : reason === "initializing"
-              ? "starting up"
-              : reason === "not-found"
-                ? "lead not found"
-                : "not live";
+            : reason === "cooldown"
+              ? `checked in ${minutes(lead ? sinceCheckInMs(lead, now) : 0)} ago`
+              : reason === "initializing"
+                ? "starting up"
+                : reason === "not-found"
+                  ? "lead not found"
+                  : "not live";
       notes.push(`${nameOf(id)} (${why})`);
     }
 
-    const replies = await Promise.race([
-      Promise.all(sent.map((s) => s.reply)),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), REPLY_WAIT_MS)),
-    ]);
-    const unrouted = sent
-      .map((s, i) => ({ s, text: replies?.[i] ?? null }))
-      .filter(({ s, text }) => !s.routed && text)
-      .map(({ s, text }) => `${s.name}: ${text}`);
-
     const parts = [
-      sent.length > 0 ? `Checked in with ${sent.length} lead${sent.length === 1 ? "" : "s"}` : "No leads checked in",
+      sent.length > 0 ? `Checked in: ${sent.join(", ")}` : "No leads checked in",
       ...(notes.length > 0 ? [`Skipped: ${notes.join(", ")}`] : []),
-      ...unrouted,
     ];
-    return { ok: true, count: sent.length, message: parts.join("\n") };
+    return { ok: true, count: sent.length, message: parts.join(" · ") };
   }
 
-  /** A lead's turn ended: if we're waiting on its check-in reply, read it and route it to the brainstorm. */
+  /** A lead archived while we wait for its reply: there will be none. */
+  onArchived(agent: PluginHookAgent): void {
+    this.pending.delete(agent.id);
+    this.recentSentAt.delete(agent.id);
+  }
+
+  /** A lead's turn ended: if we're waiting on its check-in reply, read it and route it. */
   async onTurnEnded(
     agent: PluginHookAgent,
     outcome: { kind: "completed" } | { kind: "failed"; error: { message: string } } | { kind: "canceled" },
@@ -140,10 +144,7 @@ export class CheckIns {
     const pending = this.pending.get(agent.id);
     if (!pending) return;
     this.pending.delete(agent.id);
-    if (outcome.kind !== "completed") {
-      pending.settle(null);
-      return;
-    }
+    if (outcome.kind !== "completed") return;
     let reply = "";
     try {
       const page = await paseo.agents.ref(agent.id).timeline.refetch({ direction: "tail", limit: 20 });
@@ -155,12 +156,28 @@ export class CheckIns {
     } catch {
       // A busy daemon can time out; the check-in just has no captured reply.
     }
-    if (reply && pending.brainstormId) {
-      await paseo.agents
-        .ref(pending.brainstormId)
+    if (!reply) return;
+    // Re-resolve against a fresh live list: the brainstorm may have been archived or created since the send.
+    const cfg = this.getConfig();
+    const found = await this.liveLeadsAndBrainstorms(paseo, cfg);
+    const lead = found?.leads.find((l) => l.id === agent.id);
+    if (found && !lead) return;
+    const brainstorm =
+      found && lead ? pairLeadsWithBrainstorms(found.leads, found.brainstorms, cfg).pairs.get(lead.id) : undefined;
+    if (brainstorm) {
+      const routed = await paseo.agents
+        .ref(brainstorm.id)
         .send(`Check-in reply from lead "${pending.title}":\n\n${reply}\n\n${ROSTER_PROMPT_MARKER}`)
-        .catch((error) => console.error(`check-in routing for ${agent.id} failed: ${error}`));
+        .then(() => true)
+        .catch((error) => {
+          console.error(`check-in routing for ${agent.id} failed: ${error}`);
+          return false;
+        });
+      if (routed) return;
     }
-    pending.settle(reply ? (reply.length > REPLY_CHARS ? `${reply.slice(0, REPLY_CHARS)}…` : reply) : null);
+    await updateAgentLabels(agent.id, {
+      [CHECK_IN_REPLY_LABEL]: reply.length > REPLY_CHARS ? `${reply.slice(0, REPLY_CHARS)}…` : reply,
+      [CHECK_IN_REPLY_AT_LABEL]: new Date().toISOString(),
+    });
   }
 }

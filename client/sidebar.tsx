@@ -151,8 +151,6 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
     const healthChip =
       health?.kind === "error" ? (
         <Chip theme={theme} label="error" tone="danger" />
-      ) : health?.kind === "closed" ? (
-        <Chip theme={theme} label="closed" tone="danger" />
       ) : health?.kind === "quiet" ? (
         <Chip theme={theme} label={`quiet ${formatQuiet(health.ms ?? 0)}`} tone="warning" />
       ) : null;

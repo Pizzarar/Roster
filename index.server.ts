@@ -86,7 +86,10 @@ export default function contribute(server: PluginServerContext) {
     needsAubWatcher.bind(paseo);
     return handoffs.onTurnStarted(agent, paseo);
   });
-  server.on("agent.archived", ({ agent }) => handoffs.onArchived(agent));
+  server.on("agent.archived", ({ agent }) => {
+    checkIns.onArchived(agent);
+    return handoffs.onArchived(agent);
+  });
   server.on("agent.turn_ended", ({ agent, outcome }, { paseo }) => {
     void checkIns.onTurnEnded(agent, outcome, paseo);
     needsAubWatcher.bind(paseo);

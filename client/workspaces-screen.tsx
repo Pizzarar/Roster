@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { autoArchiveStateRpc, runAutoArchiveRpc, undoAutoArchiveRpc, type AutoArchiveState } from "../shared/auto-archive";
 import { checkInLeadsRpc, createBrainstormRpc } from "../shared/brainstorm";
-import { CHECK_IN_DEDUPE_MS } from "../shared/check-in";
+import { CHECK_IN_DEDUPE_MS, CHECK_IN_REPLY_AT_LABEL, CHECK_IN_REPLY_LABEL } from "../shared/check-in";
 import { checkWorkspaceMergesRpc } from "../shared/workspaces";
 import { makeStyles, Toggle, useAgentProfiles, type Styles } from "./board";
 import { isLeadAwaitingAub, pairLeadsWithBrainstorms, normalizePath, type BoardConfig } from "../shared/config";
@@ -890,6 +890,11 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
                   : undefined
               }
             />
+            {lead && !brainstorm && lead.labels[CHECK_IN_REPLY_LABEL] ? (
+              <Text style={[styles.muted, { paddingHorizontal: 12, paddingBottom: 6 }]}>
+                Check-in {relativeTime(lead.labels[CHECK_IN_REPLY_AT_LABEL], now)}: {lead.labels[CHECK_IN_REPLY_LABEL]}
+              </Text>
+            ) : null}
           </View>
           );
         };
