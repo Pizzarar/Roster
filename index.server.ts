@@ -82,7 +82,6 @@ export default function contribute(server: PluginServerContext) {
   server.on("agent.turn_started", ({ agent }, { paseo }) => {
     autoArchiver.bind(paseo);
     needsAubWatcher.bind(paseo);
-    void needsAubWatcher.onTurnStarted(agent.id, paseo);
     return handoffs.onTurnStarted(agent, paseo);
   });
   server.on("agent.archived", ({ agent }) => handoffs.onArchived(agent));

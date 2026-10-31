@@ -1,8 +1,8 @@
 import {
   isLeadAgent,
-  isWaitingOnAub,
+  isLeadAwaitingAub,
   matchBrainstormForLead,
-  NEEDS_AUB_AT_LABEL,
+  needsAubFlaggedMs,
   needsAubReasonText,
   normalizePath,
   PARENT_LABEL,
@@ -116,27 +116,23 @@ export function raisedHandsQueue(
   const live = agents.filter((a) => !a.archivedAt && a.status !== "closed");
   const leads = live.filter((a) => agentKind(a, cfg) === "lead");
   const brainstorms = live.filter((a) => agentKind(a, cfg) === "brainstorm");
-  const queue: RaisedHandItem[] = [];
+  const queue: { item: RaisedHandItem; ms: number }[] = [];
   for (const lead of leads) {
-    if (!isWaitingOnAub(lead.labels)) continue;
-    const flaggedAt = lead.labels[NEEDS_AUB_AT_LABEL]?.trim() || lead.updatedAt || lead.createdAt;
-    const brainstorm = matchBrainstormForLead(lead, brainstorms, cfg);
-    if (brainstorm?.lastUserMessageAt) {
-      const userMs = Date.parse(brainstorm.lastUserMessageAt);
-      const flagMs = Date.parse(flaggedAt);
-      if (Number.isFinite(userMs) && Number.isFinite(flagMs) && userMs > flagMs) {
-        continue;
-      }
-    }
+    if (!isLeadAwaitingAub(lead, brainstorms, cfg)) continue;
+    const ms = needsAubFlaggedMs(lead);
     queue.push({
-      lead,
-      brainstorm,
-      reason: needsAubReasonText(lead.labels),
-      flaggedAt,
+      ms,
+      item: {
+        lead,
+        brainstorm: matchBrainstormForLead(lead, brainstorms, cfg),
+        reason: needsAubReasonText(lead.labels),
+        flaggedAt: Number.isFinite(ms) ? new Date(ms).toISOString() : "",
+      },
     });
   }
-  queue.sort((a, b) => a.flaggedAt.localeCompare(b.flaggedAt));
-  return queue;
+  // Oldest first; leads with no usable timestamp go last.
+  queue.sort((x, y) => (Number.isFinite(x.ms) ? x.ms : Infinity) - (Number.isFinite(y.ms) ? y.ms : Infinity));
+  return queue.map((q) => q.item);
 }
 
 export interface BrainstormCandidate {

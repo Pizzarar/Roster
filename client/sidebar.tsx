@@ -2,7 +2,7 @@ import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { Icon, SidebarRow } from "@getpaseo/plugin/client/ui";
 import { useMemo, useState, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
-import { isWaitingOnAub, matchBrainstormForLead, type TrackerConfig } from "../shared/config";
+import { isLeadAwaitingAub, matchBrainstormForLead, type TrackerConfig } from "../shared/config";
 import { BrainstormChip, useLeadBrainstorm } from "./brainstorm-link";
 import { useBoardConfig } from "./config";
 import {
@@ -41,7 +41,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
     const agents = [...board.agents.values()].sort(compareAgents);
     const live = agents.filter((agent) => !agent.archivedAt && agent.status !== "closed");
     return {
-      leads: cfg.leadsPreset ? agents.filter((agent) => agentKind(agent, cfg) === "lead") : [],
+      leads: cfg.leadsPreset ? live.filter((agent) => agentKind(agent, cfg) === "lead") : [],
       brainstorms: live.filter((agent) => agentKind(agent, cfg) === "brainstorm"),
       sections: cfg.trackers
         .filter((tracker) => !(cfg.leadsPreset && tracker.kind === "leads"))
@@ -53,8 +53,12 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
     };
   }, [board.agents, cfg, linked]);
   const queue = useMemo(() => raisedHandsQueue([...board.agents.values()], cfg), [board.agents, cfg]);
+  const waitingLeads = useMemo(
+    () => leads.filter((agent) => isLeadAwaitingAub(agent, brainstorms, cfg)).length,
+    [leads, brainstorms, cfg],
+  );
   const orphans = useMemo(
-    () => (linked ? orphanBrainstorms(leads.filter((lead) => !lead.archivedAt && lead.status !== "closed"), brainstorms, cfg) : []),
+    () => (linked ? orphanBrainstorms(leads, brainstorms, cfg) : []),
     [linked, leads, brainstorms, cfg],
   );
   const watched = useMemo(
@@ -146,7 +150,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
     });
 
   const row = (agent: BoardAgent, sectionId: string, extra?: ReactNode) => {
-    const waitingOnAub = agentKind(agent, cfg) === "lead" && isWaitingOnAub(agent.labels);
+    const waitingOnAub = agentKind(agent, cfg) === "lead" && isLeadAwaitingAub(agent, brainstorms, cfg);
     const attention = attentionLabel(agent);
     const subagents = subagentLabel(board.subagents.get(agent.id));
     const trailing =
@@ -286,10 +290,10 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
             <Text style={styles.sectionTitle} numberOfLines={1}>
               Leads
             </Text>
-            {leads.filter((agent) => isWaitingOnAub(agent.labels)).length > 0 ? (
+            {waitingLeads > 0 ? (
               <Chip
                 theme={theme}
-                label={`🙋 Waiting on you (${leads.filter((agent) => isWaitingOnAub(agent.labels)).length})`}
+                label={`🙋 Waiting on you (${waitingLeads})`}
                 tone="warning"
               />
             ) : null}

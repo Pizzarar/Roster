@@ -6,6 +6,7 @@ import {
   isBrainstormAgent,
   isLeadAgent,
   isWaitingOnAub,
+  aubRepliedSinceFlag,
   matchBrainstormForLead,
   NEEDS_AUB_AT_LABEL,
   NEEDS_AUB_LABEL,
@@ -137,15 +138,17 @@ export async function createBrainstorm(
       (matchedLead ? `Agent ${matchedLead.id.slice(0, 7)}` : undefined);
 
     if (reuseExisting) {
-      const leadKey = matchedLead?.labels?.[cfg.labels.lead]?.trim().toLowerCase();
-      const existing = liveAgents.find((a) => {
-        if (!isBrainstormAgent(a.title, a.labels ?? {}, cfg)) return false;
-        if (workspaceId && a.workspaceId === workspaceId) return true;
-        const aCwd = normalizePath(a.cwd);
-        if (aCwd === cwdNorm || (rootNorm !== "" && aCwd === rootNorm)) return true;
-        const aLeadKey = a.labels?.[cfg.labels.lead]?.trim().toLowerCase();
-        return Boolean(leadKey && aLeadKey && aLeadKey === leadKey);
-      });
+      const liveBrainstorms = liveAgents.filter((a) => isBrainstormAgent(a.title, a.labels ?? {}, cfg));
+      const target = {
+        labels: matchedLead?.labels,
+        workspaceId: workspaceId ?? (matchedLead as { workspaceId?: string } | undefined)?.workspaceId,
+        cwd,
+      };
+      const existing =
+        matchBrainstormForLead(target, liveBrainstorms, cfg) ??
+        (rootNorm !== ""
+          ? matchBrainstormForLead({ ...target, workspaceId: undefined, cwd: rootNorm }, liveBrainstorms, cfg)
+          : undefined);
       if (existing) {
         if (reason?.trim()) {
           const leadDesc = resolvedLeadTitle ? `"${resolvedLeadTitle}" (${resolvedLeadId})` : resolvedLeadId ?? cwd;
@@ -276,15 +279,7 @@ export async function checkInLeads(paseo: PaseoApi, cfg: BoardConfig) {
 
   let prompted = 0;
   for (const lead of idleLeads) {
-    const leadKey = lead.labels?.[cfg.labels.lead]?.trim().toLowerCase();
-    const leadCwd = normalizePath(lead.cwd);
-    const hasBrainstorm = brainstorms.some((b) => {
-      if (lead.workspaceId && b.workspaceId === lead.workspaceId) return true;
-      if (normalizePath(b.cwd) === leadCwd) return true;
-      const bLeadKey = b.labels?.[cfg.labels.lead]?.trim().toLowerCase();
-      return Boolean(leadKey && bLeadKey && leadKey === bLeadKey);
-    });
-    if (!hasBrainstorm) {
+    if (!matchBrainstormForLead(lead, brainstorms, cfg)) {
       try {
         await paseo.agents
           .ref(lead.id)
@@ -336,7 +331,6 @@ export class NeedsAubWatcher {
     const p = paseo ?? this.boundPaseo;
     if (!p) return;
     const cfg = this.getConfig();
-    if (!cfg.needsAubAutoSpawn) return;
 
     const listed = await p.agents
       .list({
@@ -353,8 +347,9 @@ export class NeedsAubWatcher {
 
     for (const lead of leads) {
       const reason = unhandledNeedsAubReason(lead.labels);
-      if (reason && !this.inFlight.has(lead.id)) {
+      if (reason && cfg.needsAubAutoSpawn && !this.inFlight.has(lead.id)) {
         this.inFlight.add(lead.id);
+        const flaggedAt = new Date().toISOString();
         try {
           await createBrainstorm(
             {
@@ -369,7 +364,6 @@ export class NeedsAubWatcher {
             p,
             cfg,
           );
-          const flaggedAt = new Date().toISOString();
           await updateAgentLabels(lead.id, [
             `${NEEDS_AUB_LABEL}=handled`,
             `${NEEDS_AUB_REASON_LABEL}=${reason}`,
@@ -384,18 +378,15 @@ export class NeedsAubWatcher {
         }
       } else if (lead.labels?.[NEEDS_AUB_LABEL]?.toLowerCase() === "handled") {
         const brainstorm = matchBrainstormForLead(lead, brainstorms, cfg);
-        if (brainstorm?.lastUserMessageAt) {
-          const userMs = Date.parse(brainstorm.lastUserMessageAt);
-          const flagMs = Date.parse(lead.labels?.[NEEDS_AUB_AT_LABEL] ?? lead.updatedAt ?? "");
-          if (Number.isFinite(userMs) && Number.isFinite(flagMs) && userMs > flagMs) {
-            await updateAgentLabels(lead.id, [`${NEEDS_AUB_LABEL}=cleared`]);
-          }
+        if (aubRepliedSinceFlag(lead, brainstorm)) {
+          // Empty values blank the stamp and reason so a later re-flag starts clean.
+          await updateAgentLabels(lead.id, [
+            `${NEEDS_AUB_LABEL}=cleared`,
+            `${NEEDS_AUB_AT_LABEL}=`,
+            `${NEEDS_AUB_REASON_LABEL}=`,
+          ]);
         }
       }
     }
-  }
-
-  async onTurnStarted(_agentId: string, _paseo: PaseoApi): Promise<void> {
-    // No-op: only clear needs-aub when Aub messages the brainstorm after needs-aub-at.
   }
 }

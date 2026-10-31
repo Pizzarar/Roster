@@ -214,10 +214,43 @@ export function unhandledNeedsAubReason(labels: Readonly<Record<string, string>>
 
 export function needsAubReasonText(labels: Readonly<Record<string, string>> | undefined): string {
   return (
-    labels?.[NEEDS_AUB_REASON_LABEL]?.trim() ||
     unhandledNeedsAubReason(labels) ||
+    labels?.[NEEDS_AUB_REASON_LABEL]?.trim() ||
     "Waiting on your decision"
   );
+}
+
+export interface FlaggableLead {
+  readonly labels?: Readonly<Record<string, string>>;
+  readonly updatedAt?: string | null;
+  readonly createdAt?: string | null;
+}
+
+/**
+ * When a lead flagged needs-aub, in ms (NaN if unknown). A live (unhandled) flag ignores any stored
+ * `needs-aub-at`, which belongs to an earlier flag; otherwise a bad stamp falls back to updatedAt/createdAt.
+ */
+export function needsAubFlaggedMs(lead: FlaggableLead): number {
+  const fallback = () => {
+    for (const iso of [lead.updatedAt, lead.createdAt]) {
+      const ms = Date.parse(iso ?? "");
+      if (Number.isFinite(ms)) return ms;
+    }
+    return Number.NaN;
+  };
+  if (unhandledNeedsAubReason(lead.labels)) return fallback();
+  const stamped = Date.parse(lead.labels?.[NEEDS_AUB_AT_LABEL]?.trim() ?? "");
+  return Number.isFinite(stamped) ? stamped : fallback();
+}
+
+/** True once Aub has messaged the lead's brainstorm after the lead flagged needs-aub. */
+export function aubRepliedSinceFlag(
+  lead: FlaggableLead,
+  brainstorm: { readonly lastUserMessageAt?: string | null } | undefined,
+): boolean {
+  const userMs = Date.parse(brainstorm?.lastUserMessageAt ?? "");
+  const flagMs = needsAubFlaggedMs(lead);
+  return Number.isFinite(userMs) && Number.isFinite(flagMs) && userMs > flagMs;
 }
 
 export function compileConfig(values: RosterSettings): BoardConfig {
@@ -283,14 +316,29 @@ export function matchBrainstormForLead<T extends MatchableAgent>(
 ): T | undefined {
   const key = (agent: MatchableAgent) => agent.labels?.[cfg.labels.lead]?.trim().toLowerCase();
   const leadKey = key(lead);
+  // A brainstorm that names a different lead must not be matched by location alone.
+  const namesOtherLead = (b: MatchableAgent) => {
+    const bKey = key(b);
+    return Boolean(leadKey && bKey && bKey !== leadKey);
+  };
   if (leadKey) {
     const byKey = brainstorms.find((b) => key(b) === leadKey);
     if (byKey) return byKey;
   }
   if (lead.workspaceId) {
-    const byWs = brainstorms.find((b) => b.workspaceId === lead.workspaceId);
+    const byWs = brainstorms.find((b) => b.workspaceId === lead.workspaceId && !namesOtherLead(b));
     if (byWs) return byWs;
   }
   const leadCwd = normalizePath(lead.cwd);
-  return brainstorms.find((b) => normalizePath(b.cwd) === leadCwd);
+  return brainstorms.find((b) => normalizePath(b.cwd) === leadCwd && !namesOtherLead(b));
+}
+
+/** The lead is flagged needs-aub and Aub has not replied in its brainstorm since. Drives every 🙋 badge and the queue. */
+export function isLeadAwaitingAub<T extends MatchableAgent & { readonly lastUserMessageAt?: string | null }>(
+  lead: MatchableAgent & FlaggableLead,
+  brainstorms: readonly T[],
+  cfg: Pick<BoardConfig, "labels">,
+): boolean {
+  if (!isWaitingOnAub(lead.labels)) return false;
+  return !aubRepliedSinceFlag(lead, matchBrainstormForLead(lead, brainstorms, cfg));
 }

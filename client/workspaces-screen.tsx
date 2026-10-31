@@ -6,7 +6,7 @@ import { autoArchiveStateRpc, runAutoArchiveRpc, undoAutoArchiveRpc, type AutoAr
 import { checkInLeadsRpc, createBrainstormRpc } from "../shared/brainstorm";
 import { checkWorkspaceMergesRpc } from "../shared/workspaces";
 import { makeStyles, Toggle, useAgentProfiles, type Styles } from "./board";
-import { isWaitingOnAub, matchBrainstormForLead, normalizePath, type BoardConfig } from "../shared/config";
+import { isLeadAwaitingAub, matchBrainstormForLead, normalizePath, type BoardConfig } from "../shared/config";
 import { BrainstormChip, useLeadBrainstorm } from "./brainstorm-link";
 import { useBoardConfig } from "./config";
 import { agentKind, basename, displayTitle, leadArea, relativeTime, sidebarTitle, type BoardAgent } from "./model";
@@ -79,6 +79,7 @@ function WorkspaceRowView({
   theme,
   styles,
   cfg,
+  brainstorms,
   expanded,
   onToggle,
   onOpen,
@@ -90,6 +91,7 @@ function WorkspaceRowView({
   theme: Theme;
   styles: Styles;
   cfg: BoardConfig;
+  brainstorms: readonly BoardAgent[];
   expanded: boolean;
   onToggle(id: string): void;
   onOpen(row: WorkspaceRow): void;
@@ -100,7 +102,7 @@ function WorkspaceRowView({
   const { workspace, verdict } = row;
   const isMerged = workspace.merged || workspace.pr?.merged === true;
   const lead = row.agents.some((agent) => agentKind(agent, cfg) === "lead");
-  const waitingOnAub = row.agents.some((agent) => agentKind(agent, cfg) === "lead" && isWaitingOnAub(agent.labels));
+  const waitingOnAub = row.agents.some((agent) => agentKind(agent, cfg) === "lead" && isLeadAwaitingAub(agent, brainstorms, cfg));
   const main = lead || workspace.kind !== "worktree";
   const activity = relativeTime(workspace.activityAt ?? workspace.createdAt, now);
   const meta =
@@ -128,9 +130,6 @@ function WorkspaceRowView({
           </Text>
           {lead ? <Chip theme={theme} label="★ lead" tone="accent" /> : null}
           {waitingOnAub ? <Chip theme={theme} label="🙋 waiting on you" tone="warning" /> : null}
-          {leadBrainstorm ? (
-            <BrainstormChip theme={theme} exists={leadBrainstorm.exists} busy={leadBrainstorm.busy} onPress={leadBrainstorm.onPress} />
-          ) : null}
           {workspace.kind !== "worktree" ? <Chip theme={theme} label={workspace.kind.replace("_", " ")} /> : null}
           {workspace.pinned ? <Chip theme={theme} label="pinned" tone="accent" /> : null}
           {workspace.dirty ? <Chip theme={theme} label="uncommitted" tone="danger" /> : null}
@@ -145,6 +144,9 @@ function WorkspaceRowView({
             />
           ) : null}
         </Pressable>
+        {leadBrainstorm ? (
+          <BrainstormChip theme={theme} exists={leadBrainstorm.exists} busy={leadBrainstorm.busy} onPress={leadBrainstorm.onPress} />
+        ) : null}
         <Text style={styles.muted} numberOfLines={1}>
           {meta}
         </Text>
@@ -190,10 +192,11 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
   const { openOrCreate, busyLeadId } = useLeadBrainstorm((agentId) => navigation?.openAgent({ agentId }));
   const [checkingIn, setCheckingIn] = useState(false);
   const waitingLeads = useMemo(
-    () =>
-      [...board.agents.values()].filter(
-        (a) => !a.archivedAt && a.status !== "closed" && agentKind(a, cfg) === "lead" && isWaitingOnAub(a.labels),
-      ),
+    () => {
+      const live = [...board.agents.values()].filter((a) => !a.archivedAt && a.status !== "closed");
+      const brainstorms = live.filter((a) => agentKind(a, cfg) === "brainstorm");
+      return live.filter((a) => agentKind(a, cfg) === "lead" && isLeadAwaitingAub(a, brainstorms, cfg));
+    },
     [board.agents, cfg],
   );
   const fetchAutoState = useRpc(autoArchiveStateRpc);
@@ -809,6 +812,7 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
               theme={theme}
               styles={styles}
               cfg={cfg}
+              brainstorms={liveBrainstorms}
               expanded={expandedRows.has(row.workspace.id)}
               onToggle={toggleRow}
               onOpen={open}

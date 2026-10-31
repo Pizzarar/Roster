@@ -693,7 +693,7 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
         {draft.values.guidanceRules.map((rule) => (
           <SettingsCard key={`${rule.id}-${formKey}`}>
             <SettingsSwitch
-              label="Enabled"
+              label="Enabled (applies when you Save)"
               value={rule.enabled}
               disabled={settings.saving}
               onValueChange={(enabled) => editRule(rule.id, { enabled })}
