@@ -12,6 +12,7 @@ import {
   NEEDS_AUB_AT_LABEL,
   NEEDS_AUB_LABEL,
   NEEDS_AUB_REASON_LABEL,
+  ROSTER_PROMPT_MARKER,
   normalizePath,
   unhandledNeedsAubReason,
   type BoardConfig,
@@ -155,7 +156,7 @@ export async function createBrainstorm(
           const leadDesc = resolvedLeadTitle ? `"${resolvedLeadTitle}" (${resolvedLeadId})` : resolvedLeadId ?? cwd;
           await paseo.agents
             .ref(existing.id)
-            .send(`Lead ${leadDesc} needs a decision on: ${reason.trim()}\n\nPlease review and surface this for Aub.`)
+            .send(`Lead ${leadDesc} needs a decision on: ${reason.trim()}\n\nPlease review and surface this for Aub.\n\n${ROSTER_PROMPT_MARKER}`)
             .catch(() => undefined);
         }
         return {
@@ -229,11 +230,13 @@ export async function createBrainstorm(
       ? Object.assign(baseConfig, { settings: { shareMcp: "on" } })
       : baseConfig;
 
-  const prompt = reason?.trim()
+  const basePrompt = reason?.trim()
     ? `Lead "${resolvedLeadTitle ?? resolvedArea}" (${resolvedLeadId ?? cwd}) needs a decision on: ${reason.trim()}. You are the Brainstorm chat for ${resolvedArea} (${cwd}). Summarize the decision needed for Aub and riff with Aub here, then message the lead when approved.`
     : resolvedLeadId
       ? `You are the Brainstorm chat for ${resolvedArea} (${cwd}). Current active lead: "${resolvedLeadTitle}" (${resolvedLeadId}). Riff with Aub here and dispatch or message the lead when approved.`
       : `You are the Brainstorm chat for ${resolvedArea} (${cwd}). Riff with Aub here and dispatch or start a lead when approved.`;
+  // The boot prompt lands as a user message that can post-date needs-aub-at; the marker keeps it from reading as Aub.
+  const prompt = `${basePrompt}\n\n${ROSTER_PROMPT_MARKER}`;
 
   const handle = await paseo.agents.create({
     cwd,

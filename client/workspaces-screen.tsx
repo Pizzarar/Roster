@@ -856,7 +856,7 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
         const safeRows = section.rows.filter((r) => r.verdict.kind === "candidate");
         const renderRow = (row: WorkspaceRow, divider: boolean) => {
           const lead =
-            cfg.linkBrainstorms && cfg.brainstormPreset
+            cfg.brainstormPreset
               ? row.agents.find((a) => !a.archivedAt && a.status !== "closed" && agentKind(a, cfg) === "lead")
               : undefined;
           const brainstorm = lead ? matchBrainstormForLead(lead, liveBrainstorms, cfg) : undefined;

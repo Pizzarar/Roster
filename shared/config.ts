@@ -37,7 +37,6 @@ export interface BoardConfig {
   readonly groupUnassignedByFolder: boolean;
   readonly showStopButton: boolean;
   readonly countSubagents: boolean;
-  readonly linkBrainstorms: boolean;
   readonly detachNewLeads: boolean;
   readonly adoptWorkers: boolean;
   readonly relayWorkerEvents: boolean;
@@ -215,7 +214,6 @@ export function compileConfig(values: RosterSettings): BoardConfig {
     groupUnassignedByFolder: values.groupUnassignedByFolder,
     showStopButton: values.showStopButton,
     countSubagents: values.countSubagents,
-    linkBrainstorms: values.linkBrainstorms,
     detachNewLeads: hasLeads ? values.detachNewLeads : false,
     adoptWorkers: hasLeads ? values.adoptWorkers : false,
     relayWorkerEvents: hasLeads ? values.relayWorkerEvents : false,

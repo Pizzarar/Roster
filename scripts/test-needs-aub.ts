@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { aubMayHaveReplied, aubReplied, isLeadAwaitingAub, needsAubStampMs } from "../shared/needs-aub.ts";
+import { aubMayHaveReplied, aubReplied, isLeadAwaitingAub, needsAubStampMs, ROSTER_PROMPT_MARKER } from "../shared/needs-aub.ts";
 
 const AT = "2026-10-31T12:00:00.000Z";
 const before = "2026-10-31T11:59:00.000Z";
@@ -35,6 +35,15 @@ const tests: [string, () => void][] = [
     assert.equal(aubMayHaveReplied(handled, after), true);
     assert.equal(aubReplied(handled, after, [agentMsg(after)]), false);
     assert.equal(aubReplied(handled, after, undefined), false);
+  }],
+  ["marked routing prompt landing after needs-aub-at does not clear", () => {
+    const marked = (timestamp: string) => ({
+      timestamp,
+      item: { type: "user_message", text: `Lead "X" needs a decision on: ...\n\n${ROSTER_PROMPT_MARKER}` },
+    });
+    assert.equal(aubMayHaveReplied(handled, after), true);
+    assert.equal(aubReplied(handled, after, [marked(after)]), false);
+    assert.equal(aubReplied(handled, after, [marked(after), human(after)]), true);
   }],
   ["missing lastUserMessageAt -> waiting", () => {
     assert.equal(aubReplied(handled, null, [human(after)]), false);

@@ -143,7 +143,7 @@ export function projectLanes(
 
 /** "ord71" from a lead title, else a short form of its area. */
 export function leadShortId(lead: BoardAgent, cfg: BoardConfig): string {
-  const ord = /ord\d+/i.exec(displayTitle(lead));
+  const ord = /\bord\d+\b/i.exec(displayTitle(lead));
   if (ord) return ord[0].toLowerCase();
   const area = leadArea(lead, cfg);
   return area.length > 10 ? `${area.slice(0, 9)}…` : area;

@@ -32,9 +32,13 @@ export function needsAubStampMs(labels: Readonly<Record<string, string>> | undef
   return raw ? Date.parse(raw) : Number.NaN;
 }
 
-/** Agent-sent prompts (send_agent_prompt) reach the target wrapped in a `<paseo-system ...>` envelope. */
+/** Stable marker Roster appends to every prompt it sends into a brainstorm, so those never read as Aub typing. */
+export const ROSTER_PROMPT_MARKER = "<!-- roster -->";
+
+/** Prompts Roster itself sent, and agent-sent prompts (send_agent_prompt), which arrive in a `<paseo-system ...>` envelope. */
 export function isAgentSentPrompt(text: string | null | undefined): boolean {
-  return /^\s*<paseo-system\b/.test(text ?? "");
+  const body = text ?? "";
+  return /^\s*<paseo-system\b/.test(body) || body.includes(ROSTER_PROMPT_MARKER);
 }
 
 export interface TimelineTailEntry {
