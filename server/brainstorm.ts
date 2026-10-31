@@ -341,7 +341,9 @@ export class NeedsAubWatcher {
         page: { limit: AGENT_PAGE_LIMIT },
       })
       .catch(() => null);
-    const live = (listed?.entries ?? [])
+    // A failed list would look like "no leads" and prune pending label retries from `routed`.
+    if (!listed) return;
+    const live = listed.entries
       .map((e) => e.agent)
       .filter((a) => !a.archivedAt && a.status !== "closed");
     const leads = live.filter((a) => isLeadAgent(a.title, a.labels ?? {}, cfg));
