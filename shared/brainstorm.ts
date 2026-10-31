@@ -17,17 +17,23 @@ export const renameBrainstormRpc = defineRpc({
 export const createBrainstormRpc = defineRpc({
   name: "brainstorm.create",
   input: z.object({
-    leadId: z.string(),
-    leadTitle: z.string(),
-    area: z.string(),
+    leadId: z.string().optional(),
+    leadTitle: z.string().optional(),
+    area: z.string().optional(),
     cwd: z.string(),
     profile: z.string().optional(),
     modeId: z.string().optional(),
+    workspaceId: z.string().optional(),
+    workspaceName: z.string().optional(),
+    projectDisplayName: z.string().optional(),
+    projectRootPath: z.string().optional(),
+    reuseExisting: z.boolean().optional(),
   }),
   output: z.object({
     ok: z.boolean(),
     message: z.string(),
     agentId: z.string().optional(),
+    reused: z.boolean().optional(),
   }),
 });
 

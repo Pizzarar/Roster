@@ -652,6 +652,17 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
         <Text style={styles.muted}>Could not load archived agents.</Text>
       ) : null}
 
+
+      {cfg.brainstormPreset && (coverage.candidates.length > 0 || coverage.missingLeads.length > 0) ? (
+        <BrainstormCoverageSection
+          coverage={coverage}
+          theme={theme}
+          styles={styles}
+          onRename={renameCandidate}
+          onCreate={createBrainstorm}
+          profiles={profiles}
+        />
+      ) : null}
       <Text style={styles.section}>{cfg.leadsPreset ? "AGENTS BY LEAD" : "AGENTS"}</Text>
       {groups.length === 0 && board.status === "ready" ? (
         <Text style={styles.muted}>No agents match.</Text>
@@ -687,17 +698,6 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
           </View>
         );
       })}
-
-      {cfg.brainstormPreset && (coverage.candidates.length > 0 || coverage.missingLeads.length > 0) ? (
-        <BrainstormCoverageSection
-          coverage={coverage}
-          theme={theme}
-          styles={styles}
-          onRename={renameCandidate}
-          onCreate={createBrainstorm}
-          profiles={profiles}
-        />
-      ) : null}
 
       {cfg.leadsPreset ? (
         <HandoffSection

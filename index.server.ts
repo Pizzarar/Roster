@@ -5,7 +5,7 @@ import { Handoffs } from "./server/handoff";
 import { stopAgent } from "./server/stop";
 import { checkWorkspaceMerges } from "./server/workspaces";
 import { checkWorkspaceMergesRpc } from "./shared/workspaces";
-import { autoArchiveStateRpc, runAutoArchiveRpc } from "./shared/auto-archive";
+import { autoArchiveStateRpc, runAutoArchiveRpc, undoAutoArchiveRpc } from "./shared/auto-archive";
 import { createBrainstormRpc, renameBrainstormRpc } from "./shared/brainstorm";
 import { fixChainedLeadsRpc, handoffStateRpc, promoteLeadRpc } from "./shared/handoff";
 import { rosterSettings } from "./shared/settings";
@@ -28,6 +28,7 @@ export default function contribute(server: PluginServerContext) {
     return autoArchiver.snapshot();
   });
   server.handle(runAutoArchiveRpc, ({ dryRun }, { paseo }) => autoArchiver.runPass({ dryRun, paseo }));
+  server.handle(undoAutoArchiveRpc, (input, { paseo }) => autoArchiver.undo({ ...input, paseo }));
   server.handle(checkWorkspaceMergesRpc, checkWorkspaceMerges);
   server.handle(renameBrainstormRpc, renameBrainstorm);
   server.handle(createBrainstormRpc, (input, { paseo }) => createBrainstorm(input, paseo, handoffs.config));

@@ -4,6 +4,7 @@ declare module "node:fs/promises" {
   export function writeFile(path: string, data: string, encoding: "utf8"): Promise<void>;
   export function rename(from: string, to: string): Promise<void>;
   export function mkdir(path: string, options: { recursive: true }): Promise<string | undefined>;
+  export function stat(path: string): Promise<{ isDirectory(): boolean }>;
 }
 
 declare module "node:path" {

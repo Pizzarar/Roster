@@ -6,6 +6,8 @@ import { AgentBoardSidebarItem } from "./client/sidebar";
 import { boardStore } from "./client/store";
 import { WorkspacesScreen } from "./client/workspaces-screen";
 import { workspaceStore } from "./client/workspaces";
+import { createBrainstormRpc } from "./shared/brainstorm";
+import { DEFAULT_CONFIG, isBrainstormAgent, normalizePath } from "./shared/config";
 import { promoteLeadRpc } from "./shared/handoff";
 
 export default function contribute(client: PluginClientContext) {
@@ -56,6 +58,36 @@ export default function contribute(client: PluginClientContext) {
       if (!result.ok) throw new Error(result.message);
       void boardStore.refreshHandoffs();
       openScreen({ screenId: BOARD_SCREEN });
+    },
+  });
+  client.addCommandCenterItem({
+    id: "brainstorm-here",
+    title: "Brainstorm here / Open brainstorm",
+    icon: "Sparkles",
+    context: "workspace",
+    keywords: ["brainstorm", "open brainstorm", "riff", "lead", "chat"],
+    async onSelect({ workspace, rpc, openScreen }) {
+      const cwdNorm = normalizePath(workspace.directory);
+      for (const agent of boardStore.getSnapshot().agents.values()) {
+        if (agent.archivedAt || agent.status === "closed") continue;
+        if (!isBrainstormAgent(agent.title, agent.labels, DEFAULT_CONFIG)) continue;
+        if (agent.workspaceId === workspace.id || normalizePath(agent.cwd) === cwdNorm) {
+          openScreen({ screenId: OPEN_AGENT_SCREEN, params: { agentId: agent.id } });
+          return;
+        }
+      }
+      const result = await rpc(createBrainstormRpc, {
+        cwd: workspace.directory,
+        workspaceId: workspace.id,
+        workspaceName: workspace.title ?? workspace.name,
+        projectDisplayName: workspace.projectDisplayName,
+        projectRootPath: workspace.projectRootPath,
+        reuseExisting: true,
+      });
+      if (!result.ok) throw new Error(result.message);
+      if (result.agentId) {
+        openScreen({ screenId: OPEN_AGENT_SCREEN, params: { agentId: result.agentId } });
+      }
     },
   });
   return async () => {

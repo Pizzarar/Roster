@@ -1,5 +1,6 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { execCommand } from "@getpaseo/plugin/server";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -8,7 +9,7 @@ import {
   normalizePath,
   type BoardConfig,
 } from "../shared/config";
-import type { AutoArchiveItem, AutoArchiveState } from "../shared/auto-archive";
+import type { AutoArchiveItem, AutoArchivePass, AutoArchiveState } from "../shared/auto-archive";
 import { checkWorkspaceMerges } from "./workspaces";
 
 type PaseoApi = Parameters<Parameters<PluginServerContext["handle"]>[1]>[1]["paseo"];
@@ -42,7 +43,33 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-const EMPTY: AutoArchiveState = { lastRunAt: null, lastRunDry: false, lastCount: 0, items: [] };
+function paseoCandidates(): string[] {
+  const env = process.env.PASEO_CLI;
+  const appData = process.env.APPDATA;
+  const localAppData = process.env.LOCALAPPDATA;
+  const candidates: string[] = [];
+  if (env) candidates.push(env);
+  candidates.push("paseo");
+  if (appData) candidates.push(join(appData, "npm", "paseo.cmd"));
+  if (localAppData) candidates.push(join(localAppData, "Programs", "Paseo", "resources", "bin", "paseo.cmd"));
+  return candidates;
+}
+
+async function unarchiveAgent(agentId: string): Promise<void> {
+  const candidates = paseoCandidates();
+  let lastError: unknown = null;
+  for (const cmd of candidates) {
+    try {
+      await execCommand(cmd, ["agent", "reload", "--json", agentId], { timeout: 30_000 });
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError ?? new Error(`Failed to unarchive agent ${agentId}`);
+}
+
+const EMPTY: AutoArchiveState = { lastRunAt: null, lastRunDry: false, lastCount: 0, items: [], passes: [] };
 
 /** Archives agents and Paseo-owned worktrees that have sat idle past the configured thresholds. */
 export class AutoArchiver {
@@ -102,6 +129,7 @@ export class AutoArchiver {
         lastRunDry: Boolean(parsed.lastRunDry),
         lastCount: parsed.lastCount ?? 0,
         items: Array.isArray(parsed.items) ? parsed.items.slice(0, MAX_ITEMS) : [],
+        passes: Array.isArray(parsed.passes) ? parsed.passes.slice(0, MAX_ITEMS) : [],
       };
     } catch {
       this.state = EMPTY;
@@ -181,6 +209,7 @@ export class AutoArchiver {
           id: agent.id,
           kind: "agent",
           name: agent.title?.trim() || agent.id.slice(0, 8),
+          directory: agent.cwd,
           reason: `idle ${Math.floor(idleMs / DAY_MS)}d`,
           dryRun,
           at,
@@ -232,6 +261,7 @@ export class AutoArchiver {
             kind: "workspace",
             name: w.title?.trim() || w.name,
             project: w.projectCustomName?.trim() || w.projectDisplayName,
+            directory: w.workspaceDirectory ?? w.projectRootPath,
             reason: `${prNumber ? `PR #${prNumber} merged` : "merged"} · idle ${Math.floor(idleMs / DAY_MS)}d`,
             dryRun,
             at,
@@ -240,13 +270,102 @@ export class AutoArchiver {
       }
     }
 
+    const passEntry: AutoArchivePass = {
+      at,
+      dryRun,
+      agentIds: found.filter((i) => i.kind === "agent").map((i) => i.id),
+      workspaces: found
+        .filter((i) => i.kind === "workspace")
+        .map((i) => ({ id: i.id, name: i.name, directory: i.directory ?? "" })),
+    };
+
     this.state = {
       lastRunAt: at,
       lastRunDry: dryRun,
       lastCount: found.length,
       items: [...found, ...this.state.items].slice(0, MAX_ITEMS),
+      passes: [passEntry, ...(this.state.passes ?? [])].slice(0, MAX_ITEMS),
     };
     await this.save();
     return this.state;
+  }
+
+  undo(options?: {
+    itemId?: string;
+    at?: string;
+    paseo?: PaseoApi;
+  }): Promise<{ state: AutoArchiveState; restored: number; failed: string[] }> {
+    if (options?.paseo) this.paseo = options.paseo;
+    const next = this.queue.then(() => this.ready).then(() => this.runUndo(options));
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async runUndo(options?: {
+    itemId?: string;
+    at?: string;
+  }): Promise<{ state: AutoArchiveState; restored: number; failed: string[] }> {
+    const paseo = this.paseo;
+    let restored = 0;
+    const failed: string[] = [];
+    const nowIso = new Date().toISOString();
+
+    let targetItems: AutoArchiveItem[] = [];
+    if (options?.itemId) {
+      targetItems = this.state.items.filter(
+        (item) => item.id === options.itemId && (!options.at || item.at === options.at) && !item.dryRun && !item.undoneAt,
+      );
+    } else {
+      const targetAt = options?.at ?? this.state.items.find((i) => !i.dryRun && !i.undoneAt)?.at;
+      targetItems = this.state.items.filter(
+        (item) => Boolean(targetAt) && item.at === targetAt && !item.dryRun && !item.undoneAt,
+      );
+    }
+
+    for (const item of targetItems) {
+      if (item.kind === "agent") {
+        try {
+          await unarchiveAgent(item.id);
+          item.undoneAt = nowIso;
+          delete item.undoError;
+          restored += 1;
+        } catch (error) {
+          item.undoError = message(error);
+          failed.push(`${item.name}: ${item.undoError}`);
+        }
+      } else if (item.kind === "workspace") {
+        const dir = item.directory;
+        const st = dir ? await stat(dir).catch(() => null) : null;
+        if (!dir || !st?.isDirectory()) {
+          item.undoError = "can't restore: folder deleted";
+          failed.push(`${item.name}: can't restore: folder deleted`);
+        } else if (!paseo) {
+          item.undoError = "Paseo API not connected";
+          failed.push(`${item.name}: Paseo API not connected`);
+        } else {
+          try {
+            await paseo.workspaces.open(dir);
+            item.undoneAt = nowIso;
+            delete item.undoError;
+            restored += 1;
+          } catch (error) {
+            item.undoError = message(error);
+            failed.push(`${item.name}: ${item.undoError}`);
+          }
+        }
+      }
+    }
+
+    if (this.state.passes) {
+      for (const pass of this.state.passes) {
+        const passItems = this.state.items.filter((item) => item.at === pass.at && !item.dryRun);
+        if (passItems.length > 0 && passItems.every((item) => Boolean(item.undoneAt))) {
+          pass.undoneAt = pass.undoneAt ?? nowIso;
+        }
+      }
+    }
+
+    await this.save();
+    return { state: this.state, restored, failed };
   }
 }
