@@ -7,7 +7,7 @@ import { Markdown } from "@getpaseo/plugin/client/ui";
 import { Text, View } from "react-native";
 import { z } from "zod";
 
-export const TIMELINE_IMAGE_KIND = "roster.inline-image";
+export const TIMELINE_IMAGE_KIND = "inline-image";
 export const TIMELINE_IMAGE_VERSION = 1;
 
 export const timelineImageSchema = z.object({
