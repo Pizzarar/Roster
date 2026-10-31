@@ -1,4 +1,5 @@
 import { rosterSettings, type GuidanceRule, type RosterSettings, type Tracker, type TrackerKind } from "./settings";
+import { normalizePath } from "./match";
 
 /** Sub-agent counting: poll the timeline tail of running agents while visible. */
 export const SUBAGENT_POLL_MS = 30_000;
@@ -113,11 +114,6 @@ export function trackerName(tracker: Pick<Tracker, "name" | "kind" | "pattern">)
   return tracker.name.trim() || (tracker.kind === "folder" && tracker.pattern.trim()) || KIND_NAMES[tracker.kind];
 }
 
-/** Lower-case, forward slashes, no trailing slash: for folder matching. */
-export function normalizePath(path: string): string {
-  return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-}
-
 function parseLabel(pattern: string): [string, string] | null {
   const at = pattern.indexOf("=");
   if (at <= 0) return null;
@@ -192,6 +188,7 @@ export function isBrainstormAgent(
   return cfg.brainstormTitle?.test(title ?? "") ?? false;
 }
 
+export * from "./match";
 export * from "./needs-aub";
 
 export function compileConfig(values: RosterSettings): BoardConfig {
@@ -241,37 +238,6 @@ export function compileConfig(values: RosterSettings): BoardConfig {
 }
 
 export const DEFAULT_CONFIG: BoardConfig = compileConfig(DEFAULT_SETTINGS);
-
-export interface MatchableAgent {
-  readonly labels?: Readonly<Record<string, string>>;
-  readonly workspaceId?: string;
-  readonly cwd: string;
-}
-
-/** Match a brainstorm to a lead: `lead=<key>` label first, then workspaceId, then normalized cwd. */
-export function matchBrainstormForLead<T extends MatchableAgent>(
-  lead: MatchableAgent,
-  brainstorms: readonly T[],
-  cfg: Pick<BoardConfig, "labels">,
-): T | undefined {
-  const key = (agent: MatchableAgent) => agent.labels?.[cfg.labels.lead]?.trim().toLowerCase();
-  const leadKey = key(lead);
-  // A brainstorm that names a different lead must not be matched by location alone.
-  const namesOtherLead = (b: MatchableAgent) => {
-    const bKey = key(b);
-    return Boolean(leadKey && bKey && bKey !== leadKey);
-  };
-  if (leadKey) {
-    const byKey = brainstorms.find((b) => key(b) === leadKey);
-    if (byKey) return byKey;
-  }
-  if (lead.workspaceId) {
-    const byWs = brainstorms.find((b) => b.workspaceId === lead.workspaceId && !namesOtherLead(b));
-    if (byWs) return byWs;
-  }
-  const leadCwd = normalizePath(lead.cwd);
-  return brainstorms.find((b) => normalizePath(b.cwd) === leadCwd && !namesOtherLead(b));
-}
 
 /** Re-exported for call sites that already import from config. */
 export { isLeadAwaitingAub } from "./needs-aub";

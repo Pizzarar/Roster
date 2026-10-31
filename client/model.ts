@@ -2,6 +2,7 @@ import {
   isLeadAgent,
   isLeadAwaitingAub,
   matchBrainstormForLead,
+  pairLeadsWithBrainstorms,
   needsAubStampMs,
   needsAubReasonText,
   normalizePath,
@@ -84,20 +85,6 @@ export function leadArea(lead: BoardAgent, cfg: BoardConfig): string {
   return stripped || basename(lead.cwd);
 }
 
-/** Live brainstorms that do not match any live lead. */
-export function orphanBrainstorms(
-  leads: readonly BoardAgent[],
-  brainstorms: readonly BoardAgent[],
-  cfg: BoardConfig,
-): BoardAgent[] {
-  const matchedIds = new Set<string>();
-  for (const lead of leads) {
-    const matched = matchBrainstormForLead(lead, brainstorms, cfg);
-    if (matched) matchedIds.add(matched.id);
-  }
-  return brainstorms.filter((b) => !matchedIds.has(b.id));
-}
-
 /** Display/ordering time only (never used to decide whether a flag is answered). */
 function flagTimeMs(lead: BoardAgent): number {
   const stamped = needsAubStampMs(lead.labels);
@@ -129,13 +116,14 @@ export function projectLanes(
   brainstorms: readonly BoardAgent[],
   cfg: BoardConfig,
 ): ProjectLane[] {
+  const { pairs, unpaired } = pairLeadsWithBrainstorms(leads, brainstorms, cfg);
   const lanes: ProjectLane[] = leads.map((lead) => ({
     key: lead.id,
     title: leadArea(lead, cfg),
     lead,
-    brainstorm: matchBrainstormForLead(lead, brainstorms, cfg),
+    brainstorm: pairs.get(lead.id),
   }));
-  for (const brainstorm of orphanBrainstorms(leads, brainstorms, cfg)) {
+  for (const brainstorm of unpaired) {
     lanes.push({ key: brainstorm.id, title: brainstormArea(brainstorm), lead: undefined, brainstorm });
   }
   return lanes;

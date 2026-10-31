@@ -1,5 +1,6 @@
 import type { RpcInput } from "@getpaseo/plugin";
-import { execCommand, type PluginServerContext } from "@getpaseo/plugin/server";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { labelArg, runPaseo } from "./paseo-cli";
 import { checkInLeadsRpc, resolveProviderAutoMode, type createBrainstormRpc, type renameBrainstormRpc } from "../shared/brainstorm";
 import {
   AGENT_PAGE_LIMIT,
@@ -21,21 +22,6 @@ import {
 type PaseoApi = Parameters<Parameters<PluginServerContext["handle"]>[1]>[1]["paseo"];
 type ProviderId = Parameters<PaseoApi["providers"]["listModes"]>[0];
 type AgentCreateConfig = Parameters<PaseoApi["agents"]["create"]>[0]["config"];
-
-function paseoCandidates(): string[] {
-  const candidates: string[] = [];
-  if (process.env.PASEO_CLI) {
-    candidates.push(process.env.PASEO_CLI);
-  }
-  candidates.push("paseo");
-  if (process.env.APPDATA) {
-    candidates.push(`${process.env.APPDATA}\\npm\\paseo.cmd`);
-  }
-  if (process.env.LOCALAPPDATA) {
-    candidates.push(`${process.env.LOCALAPPDATA}\\Programs\\Paseo\\resources\\bin\\paseo.cmd`);
-  }
-  return candidates;
-}
 
 function messageOf(error: unknown): string {
   const stderr = (error as { stderr?: unknown }).stderr;
@@ -59,7 +45,6 @@ function leadAreaFromTitle(title: string | null | undefined, cwd: string, cfg: B
 }
 
 export async function renameBrainstorm({ agentId, title, leadKey }: RpcInput<typeof renameBrainstormRpc>) {
-  let lastError = "paseo CLI not found";
   const args = [
     "agent",
     "update",
@@ -68,21 +53,14 @@ export async function renameBrainstorm({ agentId, title, leadKey }: RpcInput<typ
     title,
     "--label",
     "role=brainstorm",
-    ...(leadKey ? ["--label", `lead=${leadKey}`] : []),
+    ...(leadKey ? ["--label", labelArg("lead", leadKey)] : []),
   ];
-
-  for (const command of paseoCandidates()) {
-    try {
-      await execCommand(command, args, { timeout: 30_000 });
-      return { ok: true, message: `Renamed to ${title}` };
-    } catch (error) {
-      const code = (error as { code?: unknown }).code;
-      lastError = messageOf(error);
-      if (code !== "ENOENT") break;
-    }
+  try {
+    await runPaseo(args);
+    return { ok: true, message: `Renamed to ${title}` };
+  } catch (error) {
+    return { ok: false, message: messageOf(error) };
   }
-
-  return { ok: false, message: lastError };
 }
 
 export async function createBrainstorm(
@@ -253,18 +231,15 @@ export async function createBrainstorm(
   };
 }
 
-export async function updateAgentLabels(agentId: string, labels: readonly string[]): Promise<boolean> {
-  const args = ["agent", "update", agentId, ...labels.flatMap((l) => ["--label", l])];
-  for (const command of paseoCandidates()) {
-    try {
-      await execCommand(command, args, { timeout: 30_000 });
-      return true;
-    } catch (error) {
-      const code = (error as { code?: unknown }).code;
-      if (code !== "ENOENT") break;
-    }
+export async function updateAgentLabels(agentId: string, labels: Readonly<Record<string, string>>): Promise<boolean> {
+  const args = ["agent", "update", agentId, ...Object.entries(labels).flatMap(([k, v]) => ["--label", labelArg(k, v)])];
+  try {
+    await runPaseo(args);
+    return true;
+  } catch (error) {
+    console.error(`label update for ${agentId} failed: ${messageOf(error)}`);
+    return false;
   }
-  return false;
 }
 
 export async function checkInLeads(paseo: PaseoApi, cfg: BoardConfig) {
@@ -319,6 +294,8 @@ export class NeedsAubWatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
   private boundPaseo: PaseoApi | null = null;
   private readonly inFlight = new Set<string>();
+  /** Lead id -> the reason already routed, so a failed label write can't cause a re-route each tick. */
+  private readonly routed = new Map<string, string>();
 
   constructor(private readonly getConfig: () => BoardConfig) {}
 
@@ -362,8 +339,12 @@ export class NeedsAubWatcher {
 
     for (const lead of leads) {
       const reason = unhandledNeedsAubReason(lead.labels);
-      if (reason && cfg.needsAubAutoSpawn && !this.inFlight.has(lead.id)) {
+      if (!reason) this.routed.delete(lead.id);
+      // Spawns only for a real, non-empty, unhandled reason, and once per reason even if the
+      // "handled" label write fails (otherwise every tick would route it again).
+      if (reason && cfg.needsAubAutoSpawn && !this.inFlight.has(lead.id) && this.routed.get(lead.id) !== reason) {
         this.inFlight.add(lead.id);
+        this.routed.set(lead.id, reason);
         try {
           const routed = await createBrainstorm(
             {
@@ -381,12 +362,13 @@ export class NeedsAubWatcher {
           // Routing sends a prompt into the brainstorm, which bumps its lastUserMessageAt. Stamp after
           // that, and no earlier than the brainstorm's own latest user message, so only a later message clears.
           const flaggedAt = new Date(await routedBaselineMs(p, routed.agentId)).toISOString();
-          await updateAgentLabels(lead.id, [
-            `${NEEDS_AUB_LABEL}=handled`,
-            `${NEEDS_AUB_REASON_LABEL}=${reason}`,
-            `${NEEDS_AUB_AT_LABEL}=${flaggedAt}`,
-          ]);
+          await updateAgentLabels(lead.id, {
+            [NEEDS_AUB_LABEL]: "handled",
+            [NEEDS_AUB_REASON_LABEL]: reason,
+            [NEEDS_AUB_AT_LABEL]: flaggedAt,
+          });
         } catch (error) {
+          this.routed.delete(lead.id);
           console.error(
             `auto-spawn brainstorm for ${lead.id} failed: ${error instanceof Error ? error.message : String(error)}`,
           );
@@ -404,11 +386,11 @@ export class NeedsAubWatcher {
             .catch(() => undefined);
           if (aubReplied(lead.labels, brainstorm.lastUserMessageAt, tail)) {
             // Only now are the stamp and reason blanked, so a later re-flag starts clean.
-            await updateAgentLabels(lead.id, [
-              `${NEEDS_AUB_LABEL}=cleared`,
-              `${NEEDS_AUB_AT_LABEL}=`,
-              `${NEEDS_AUB_REASON_LABEL}=`,
-            ]);
+            await updateAgentLabels(lead.id, {
+              [NEEDS_AUB_LABEL]: "cleared",
+              [NEEDS_AUB_AT_LABEL]: "",
+              [NEEDS_AUB_REASON_LABEL]: "",
+            });
           }
         }
       }

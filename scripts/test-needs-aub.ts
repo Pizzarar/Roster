@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { aubMayHaveReplied, aubReplied, isLeadAwaitingAub, needsAubStampMs, ROSTER_PROMPT_MARKER } from "../shared/needs-aub.ts";
+import { aubMayHaveReplied, aubReplied, isLeadAwaitingAub, needsAubStampMs, ROSTER_PROMPT_MARKER, unhandledNeedsAubReason } from "../shared/needs-aub.ts";
 
 const AT = "2026-10-31T12:00:00.000Z";
 const before = "2026-10-31T11:59:00.000Z";
@@ -57,6 +57,14 @@ const tests: [string, () => void][] = [
       assert.equal(aubReplied(labels, after, [human(after)]), false);
       assert.equal(isLeadAwaitingAub({ labels }), true);
     }
+  }],
+  ["only a real unhandled reason can trigger routing", () => {
+    for (const v of ["", "   ", "handled", "Handled", "cleared", "none", "false", "0", undefined]) {
+      const labels: Record<string, string> = v === undefined ? {} : { "needs-aub": v };
+      assert.equal(unhandledNeedsAubReason(labels), null, `value ${JSON.stringify(v)}`);
+    }
+    assert.equal(unhandledNeedsAubReason({ "needs-aub": " Pick tick rate " }), "Pick tick rate");
+    assert.equal(unhandledNeedsAubReason(undefined), null);
   }],
   ["cleared / none labels are not waiting", () => {
     assert.equal(isLeadAwaitingAub({ labels: { "needs-aub": "cleared" } }), false);
