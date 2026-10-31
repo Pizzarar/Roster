@@ -1,13 +1,13 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { AutoArchiver } from "./server/auto-archive";
 import { CheckIns } from "./server/check-in";
-import { createBrainstorm, NeedsAubWatcher, renameBrainstorm } from "./server/brainstorm";
+import { aubHandAction, createBrainstorm, NeedsAubWatcher, renameBrainstorm } from "./server/brainstorm";
 import { Handoffs } from "./server/handoff";
 import { stopAgent } from "./server/stop";
 import { checkWorkspaceMerges } from "./server/workspaces";
 import { checkWorkspaceMergesRpc } from "./shared/workspaces";
 import { autoArchiveStateRpc, runAutoArchiveRpc, undoAutoArchiveRpc } from "./shared/auto-archive";
-import { checkInLeadsRpc, createBrainstormRpc, renameBrainstormRpc } from "./shared/brainstorm";
+import { checkInLeadsRpc, clearHandRpc, createBrainstormRpc, renameBrainstormRpc, snoozeHandRpc } from "./shared/brainstorm";
 import { fixChainedLeadsRpc, handoffStateRpc, promoteLeadRpc } from "./shared/handoff";
 import { rosterSettings } from "./shared/settings";
 import { stopAgentRpc } from "./shared/stop";
@@ -28,6 +28,8 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(stopAgentRpc, stopAgent);
   server.handle(checkInLeadsRpc, ({ leadId }, { paseo }) => checkIns.run(paseo, leadId));
+  server.handle(clearHandRpc, ({ leadId }) => aubHandAction("clear", leadId));
+  server.handle(snoozeHandRpc, ({ leadId, flagAt }) => aubHandAction("snooze", leadId, flagAt));
   server.handle(autoArchiveStateRpc, (_input, { paseo }) => {
     autoArchiver.bind(paseo);
     return autoArchiver.snapshot();

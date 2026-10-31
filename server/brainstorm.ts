@@ -7,6 +7,9 @@ import {
   isBrainstormAgent,
   isLeadAgent,
   isWaitingOnAub,
+  clearHandLabels,
+  isDuplicateClick,
+  snoozeHandLabels,
   aubMayHaveReplied,
   aubReplied,
   brainstormForLead,
@@ -245,6 +248,28 @@ export async function updateAgentLabels(agentId: string, labels: Readonly<Record
     console.error(`label update for ${agentId} failed: ${messageOf(error)}`);
     return false;
   }
+}
+
+/** Lead id -> when Aub's last clear/snooze was accepted; stamped synchronously before the label write's await. */
+const recentHandActionAt = new Map<string, number>();
+
+export async function aubHandAction(
+  kind: "clear" | "snooze",
+  leadId: string,
+  flagAt = "",
+): Promise<{ ok: boolean; message: string }> {
+  const now = Date.now();
+  for (const [id, at] of recentHandActionAt) if (!isDuplicateClick(at, now)) recentHandActionAt.delete(id);
+  if (isDuplicateClick(recentHandActionAt.get(leadId), now)) return { ok: true, message: "Already done" };
+  if (kind === "snooze" && !flagAt) return { ok: false, message: "Still being routed, try again in a moment" };
+  recentHandActionAt.set(leadId, now);
+  const ok = await updateAgentLabels(leadId, kind === "clear" ? clearHandLabels(now) : snoozeHandLabels(flagAt, now));
+  if (!ok) {
+    recentHandActionAt.delete(leadId);
+    return { ok: false, message: `Could not ${kind} the hand` };
+  }
+  console.log(`${kind === "clear" ? "cleared" : "snoozed 1h"} raised hand of ${leadId.slice(0, 8)} (by aub)`);
+  return { ok: true, message: kind === "clear" ? "Cleared" : "Snoozed 1h" };
 }
 
 async function routedBaselineMs(paseo: PaseoApi, brainstormId: string | undefined): Promise<number> {

@@ -194,6 +194,7 @@ export function isBrainstormAgent(
 export * from "./match";
 export * from "./needs-aub";
 export * from "./check-in";
+export * from "./clear-hand";
 
 export function compileConfig(values: RosterSettings): BoardConfig {
   const hasBrainstorm = values.brainstormPreset;

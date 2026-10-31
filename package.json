@@ -18,7 +18,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types scripts/test-needs-aub.ts && node --experimental-strip-types scripts/test-match.ts && node --experimental-strip-types scripts/test-check-in.ts"
+    "test": "node --experimental-strip-types scripts/test-needs-aub.ts && node --experimental-strip-types scripts/test-match.ts && node --experimental-strip-types scripts/test-check-in.ts && node --experimental-strip-types scripts/test-clear-hand.ts"
   },
   "devDependencies": {
     "@getpaseo/plugin": "0.13.2",
