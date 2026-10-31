@@ -1,5 +1,6 @@
 import { defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
+import { DEFAULT_GROUP_ORDER } from "./groups";
 
 /**
  * What a sidebar section tracks. `leads` and `brainstorm` use Roster's own classification;
@@ -79,6 +80,8 @@ export const rosterSettings = defineSettings({
     leadRoles: z.string().default("lead"),
     oldLeadRoles: z.string().default("former-lead, old-lead"),
     brainstormRoles: z.string().default("brainstorm"),
+    /** Comma-separated group names, first to last, for prefix grouping; other prefixes follow A-Z, then Other. */
+    groupOrder: z.string().default(DEFAULT_GROUP_ORDER),
     groupUnassignedByFolder: z.boolean().default(true),
     showStopButton: z.boolean().default(true),
     countSubagents: z.boolean().default(true),

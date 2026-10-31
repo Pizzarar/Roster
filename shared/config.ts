@@ -1,6 +1,7 @@
 import { rosterSettings, type GuidanceRule, type RosterSettings, type Tracker, type TrackerKind } from "./settings";
 import { normalizePath } from "./match";
 import { minutesError } from "./check-in";
+import { parseGroupOrder } from "./groups";
 
 /** Sub-agent counting: poll the timeline tail of running agents while visible. */
 export const SUBAGENT_POLL_MS = 30_000;
@@ -36,6 +37,7 @@ export interface BoardConfig {
   readonly leadRoles: readonly string[];
   readonly oldLeadRoles: readonly string[];
   readonly brainstormRoles: readonly string[];
+  readonly groupOrder: readonly string[];
   readonly groupUnassignedByFolder: boolean;
   readonly showStopButton: boolean;
   readonly countSubagents: boolean;
@@ -195,6 +197,8 @@ export * from "./match";
 export * from "./needs-aub";
 export * from "./check-in";
 export * from "./clear-hand";
+export * from "./groups";
+export * from "./profiles";
 
 export function compileConfig(values: RosterSettings): BoardConfig {
   const hasBrainstorm = values.brainstormPreset;
@@ -213,6 +217,7 @@ export function compileConfig(values: RosterSettings): BoardConfig {
     leadRoles: hasLeads ? list(values.leadRoles) : [],
     oldLeadRoles: hasLeads ? list(values.oldLeadRoles) : [],
     brainstormRoles: hasBrainstorm ? list(values.brainstormRoles) : [],
+    groupOrder: parseGroupOrder(values.groupOrder),
     groupUnassignedByFolder: values.groupUnassignedByFolder,
     showStopButton: values.showStopButton,
     countSubagents: values.countSubagents,
