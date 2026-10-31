@@ -17,7 +17,7 @@ import {
   type LiveWorktree,
 } from "./model";
 import { boardStore, useBoard, useNow, useSubagentWatch, type SubagentCount } from "./store";
-import { isWaitingOnAub, PARENT_LABEL, type BoardConfig } from "../shared/config";
+import { isLeadAwaitingAub, PARENT_LABEL, type BoardConfig } from "../shared/config";
 import { stopAgentRpc } from "../shared/stop";
 import { fixChainedLeadsRpc, type HandoffRecord } from "../shared/handoff";
 import { createBrainstormRpc, renameBrainstormRpc } from "../shared/brainstorm";
@@ -149,6 +149,7 @@ function AgentRow({
   subagents,
   now,
   cfg,
+  brainstorms,
   theme,
   styles,
   onOpen,
@@ -162,6 +163,7 @@ function AgentRow({
   subagents: SubagentCount | undefined;
   now: number;
   cfg: BoardConfig;
+  brainstorms: readonly BoardAgent[];
   theme: Theme;
   styles: Styles;
   onOpen(agent: BoardAgent): void;
@@ -198,7 +200,7 @@ function AgentRow({
             >
               {displayTitle(agent)}
             </Text>
-            {kind === "lead" && isWaitingOnAub(agent.labels) ? (
+            {kind === "lead" && isLeadAwaitingAub(agent, brainstorms, cfg) ? (
               <Chip theme={theme} label="🙋 waiting on you" tone="warning" />
             ) : null}
             {attention ? (
@@ -522,6 +524,10 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
   );
   const relays = board.handoffs.relays;
   const groups = useMemo(() => groupAgents(all, visible, cfg, relays), [all, visible, cfg, relays]);
+  const liveBrainstorms = useMemo(
+    () => live.filter((a) => !a.archivedAt && a.status !== "closed" && agentKind(a, cfg) === "brainstorm"),
+    [live, cfg],
+  );
   const chained = useMemo(() => chainedLeads(live, cfg), [live, cfg]);
   const coverage = useMemo(() => analyzeBrainstormCoverage(live, cfg), [live, cfg]);
   const worktrees = useMemo(() => liveWorktrees(live), [live]);
@@ -690,6 +696,7 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
                   subagents={board.subagents.get(agent.id)}
                   now={now}
                   cfg={cfg}
+                  brainstorms={liveBrainstorms}
                   theme={theme}
                   styles={styles}
                   onOpen={openAgent}
