@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { matchBrainstormForLead, normalizePath, pairLeadsWithBrainstorms } from "../shared/match.ts";
+import { brainstormForLead, matchBrainstormForLead, normalizePath, pairLeadsWithBrainstorms } from "../shared/match.ts";
 
 const cfg = { labels: { lead: "lead" } };
 const CWD = "C:\\Users\\Fugma\\projects\\Escape-From-Idle";
@@ -24,6 +24,18 @@ const tests: [string, () => void][] = [
     assert.equal(pairs.get("ui")?.id, "0dda30e2");
     assert.equal(pairs.get("559e2ec8")?.id, "a44cd614");
     assert.equal(unpaired.length, 0);
+  }],
+  ["every caller agrees: unlabeled lead beside a lead=ui-lab lead gets no brainstorm (＋ chat)", () => {
+    const uiLead = { id: "ui", labels: { lead: "ui-lab" }, workspaceId: "ws-ui", cwd: CWD };
+    const uiBrainstorm = { id: "0dda30e2", labels: { lead: "ui-lab" }, workspaceId: "ws-x", cwd: CWD };
+    const leads = [lead, uiLead];
+    assert.equal(brainstormForLead(lead, leads, [uiBrainstorm], cfg), undefined);
+    assert.equal(brainstormForLead(uiLead, leads, [uiBrainstorm], cfg)?.id, "0dda30e2");
+    // Order of leads must not matter.
+    assert.equal(brainstormForLead(lead, [uiLead, lead], [uiBrainstorm], cfg), undefined);
+    // A target not yet in the live set is added and still can't take ui-lab's.
+    const target = { id: "t", labels: undefined, workspaceId: "w", cwd: CWD };
+    assert.equal(brainstormForLead(target, [uiLead], [uiBrainstorm], cfg), undefined);
   }],
   ["lead with no brainstorm stays a lane with none; stray brainstorm is unpaired", () => {
     const far = { id: "far", labels: { lead: "other" }, workspaceId: "w", cwd: "C:\\elsewhere" };

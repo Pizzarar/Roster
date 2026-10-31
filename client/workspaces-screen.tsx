@@ -6,7 +6,7 @@ import { autoArchiveStateRpc, runAutoArchiveRpc, undoAutoArchiveRpc, type AutoAr
 import { checkInLeadsRpc, createBrainstormRpc } from "../shared/brainstorm";
 import { checkWorkspaceMergesRpc } from "../shared/workspaces";
 import { makeStyles, Toggle, useAgentProfiles, type Styles } from "./board";
-import { isLeadAwaitingAub, matchBrainstormForLead, normalizePath, type BoardConfig } from "../shared/config";
+import { isLeadAwaitingAub, pairLeadsWithBrainstorms, normalizePath, type BoardConfig } from "../shared/config";
 import { BrainstormChip, useLeadBrainstorm } from "./brainstorm-link";
 import { useBoardConfig } from "./config";
 import {
@@ -449,6 +449,13 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
     [board.agents, cfg],
   );
 
+  const leadPairs = useMemo(() => {
+    const leads = [...board.agents.values()].filter(
+      (a) => !a.archivedAt && a.status !== "closed" && agentKind(a, cfg) === "lead",
+    );
+    return pairLeadsWithBrainstorms(leads, liveBrainstorms, cfg).pairs;
+  }, [board.agents, liveBrainstorms, cfg]);
+
   const spawnBrainstorm = async (target?: BrainstormTarget, profileId?: string) => {
     if (!target) return;
     setCreatingBrainstorm(true);
@@ -859,7 +866,7 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
             cfg.brainstormPreset
               ? row.agents.find((a) => !a.archivedAt && a.status !== "closed" && agentKind(a, cfg) === "lead")
               : undefined;
-          const brainstorm = lead ? matchBrainstormForLead(lead, liveBrainstorms, cfg) : undefined;
+          const brainstorm = lead ? leadPairs.get(lead.id) : undefined;
           return (
           <View key={row.workspace.id}>
             {divider ? <View style={styles.divider} /> : null}

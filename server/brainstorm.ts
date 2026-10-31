@@ -9,7 +9,8 @@ import {
   isWaitingOnAub,
   aubMayHaveReplied,
   aubReplied,
-  matchBrainstormForLead,
+  brainstormForLead,
+  pairLeadsWithBrainstorms,
   NEEDS_AUB_AT_LABEL,
   NEEDS_AUB_LABEL,
   NEEDS_AUB_REASON_LABEL,
@@ -124,11 +125,15 @@ export async function createBrainstorm(
         workspaceId: workspaceId ?? (matchedLead as { workspaceId?: string } | undefined)?.workspaceId,
         cwd,
       };
+      // Pair against every live lead, so an unlabeled target can't take another lead's keyed brainstorm.
+      const otherLeads = liveAgents.filter(
+        (a) => a.id !== matchedLead?.id && isLeadAgent(a.title, a.labels ?? {}, cfg),
+      );
+      const targetId = matchedLead?.id ?? "__target__";
+      const pair = (t: typeof target) =>
+        brainstormForLead({ id: targetId, ...t }, [...otherLeads, { id: targetId, ...t }], liveBrainstorms, cfg);
       const existing =
-        matchBrainstormForLead(target, liveBrainstorms, cfg) ??
-        (rootNorm !== ""
-          ? matchBrainstormForLead({ ...target, workspaceId: undefined, cwd: rootNorm }, liveBrainstorms, cfg)
-          : undefined);
+        pair(target) ?? (rootNorm !== "" ? pair({ ...target, workspaceId: undefined, cwd: rootNorm }) : undefined);
       if (existing) {
         if (reason?.trim()) {
           const leadDesc = resolvedLeadTitle ? `"${resolvedLeadTitle}" (${resolvedLeadId})` : resolvedLeadId ?? cwd;
@@ -254,11 +259,13 @@ export async function checkInLeads(paseo: PaseoApi, cfg: BoardConfig) {
     .map((e) => e.agent)
     .filter((a) => !a.archivedAt && a.status !== "closed");
   const brainstorms = live.filter((a) => isBrainstormAgent(a.title, a.labels ?? {}, cfg));
-  const idleLeads = live.filter((a) => a.status === "idle" && isLeadAgent(a.title, a.labels ?? {}, cfg));
+  const allLeads = live.filter((a) => isLeadAgent(a.title, a.labels ?? {}, cfg));
+  const idleLeads = allLeads.filter((a) => a.status === "idle");
+  const { pairs } = pairLeadsWithBrainstorms(allLeads, brainstorms, cfg);
 
   let prompted = 0;
   for (const lead of idleLeads) {
-    if (!matchBrainstormForLead(lead, brainstorms, cfg)) {
+    if (!pairs.get(lead.id)) {
       try {
         await paseo.agents
           .ref(lead.id)
@@ -294,8 +301,11 @@ export class NeedsAubWatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
   private boundPaseo: PaseoApi | null = null;
   private readonly inFlight = new Set<string>();
-  /** Lead id -> the reason already routed, so a failed label write can't cause a re-route each tick. */
-  private readonly routed = new Map<string, string>();
+  /**
+   * Lead id -> a flag already routed whose "handled" label write hasn't landed yet. Later ticks retry only the
+   * write, never createBrainstorm. Dropped on success, or when the lead is gone or no longer flagged.
+   */
+  private readonly routed = new Map<string, { reason: string; labels: Record<string, string> }>();
 
   constructor(private readonly getConfig: () => BoardConfig) {}
 
@@ -337,38 +347,49 @@ export class NeedsAubWatcher {
     const leads = live.filter((a) => isLeadAgent(a.title, a.labels ?? {}, cfg));
     const brainstorms = live.filter((a) => isBrainstormAgent(a.title, a.labels ?? {}, cfg));
 
+    const { pairs } = pairLeadsWithBrainstorms(leads, brainstorms, cfg);
+    for (const id of [...this.routed.keys()]) {
+      const lead = leads.find((l) => l.id === id);
+      if (!lead || !unhandledNeedsAubReason(lead.labels)) this.routed.delete(id);
+    }
     for (const lead of leads) {
       const reason = unhandledNeedsAubReason(lead.labels);
-      if (!reason) this.routed.delete(lead.id);
-      // Spawns only for a real, non-empty, unhandled reason, and once per reason even if the
-      // "handled" label write fails (otherwise every tick would route it again).
-      if (reason && cfg.needsAubAutoSpawn && !this.inFlight.has(lead.id) && this.routed.get(lead.id) !== reason) {
+      // Spawns only for a real, non-empty, unhandled reason.
+      if (reason) {
+        if (!cfg.needsAubAutoSpawn || this.inFlight.has(lead.id)) continue;
         this.inFlight.add(lead.id);
-        this.routed.set(lead.id, reason);
         try {
-          const routed = await createBrainstorm(
-            {
-              leadId: lead.id,
-              leadTitle: lead.title ?? undefined,
-              area: leadAreaFromTitle(lead.title, lead.cwd, cfg),
-              cwd: lead.cwd,
-              workspaceId: lead.workspaceId ?? undefined,
-              reuseExisting: true,
+          let pending = this.routed.get(lead.id);
+          if (pending?.reason !== reason) {
+            this.routed.delete(lead.id);
+            const routed = await createBrainstorm(
+              {
+                leadId: lead.id,
+                leadTitle: lead.title ?? undefined,
+                area: leadAreaFromTitle(lead.title, lead.cwd, cfg),
+                cwd: lead.cwd,
+                workspaceId: lead.workspaceId ?? undefined,
+                reuseExisting: true,
+                reason,
+              },
+              p,
+              cfg,
+            );
+            // Routing sends a prompt into the brainstorm, which bumps its lastUserMessageAt. Stamp after
+            // that, and no earlier than the brainstorm's own latest user message, so only a later message clears.
+            const flaggedAt = new Date(await routedBaselineMs(p, routed.agentId)).toISOString();
+            pending = {
               reason,
-            },
-            p,
-            cfg,
-          );
-          // Routing sends a prompt into the brainstorm, which bumps its lastUserMessageAt. Stamp after
-          // that, and no earlier than the brainstorm's own latest user message, so only a later message clears.
-          const flaggedAt = new Date(await routedBaselineMs(p, routed.agentId)).toISOString();
-          await updateAgentLabels(lead.id, {
-            [NEEDS_AUB_LABEL]: "handled",
-            [NEEDS_AUB_REASON_LABEL]: reason,
-            [NEEDS_AUB_AT_LABEL]: flaggedAt,
-          });
+              labels: {
+                [NEEDS_AUB_LABEL]: "handled",
+                [NEEDS_AUB_REASON_LABEL]: reason,
+                [NEEDS_AUB_AT_LABEL]: flaggedAt,
+              },
+            };
+            this.routed.set(lead.id, pending);
+          }
+          if (await updateAgentLabels(lead.id, pending.labels)) this.routed.delete(lead.id);
         } catch (error) {
-          this.routed.delete(lead.id);
           console.error(
             `auto-spawn brainstorm for ${lead.id} failed: ${error instanceof Error ? error.message : String(error)}`,
           );
@@ -376,7 +397,7 @@ export class NeedsAubWatcher {
           this.inFlight.delete(lead.id);
         }
       } else if (lead.labels?.[NEEDS_AUB_LABEL]?.toLowerCase() === "handled") {
-        const brainstorm = matchBrainstormForLead(lead, brainstorms, cfg);
+        const brainstorm = pairs.get(lead.id);
         if (brainstorm && aubMayHaveReplied(lead.labels, brainstorm.lastUserMessageAt)) {
           // lastUserMessageAt also counts agent-sent prompts; confirm a human-typed message in the timeline.
           const tail = await p.agents

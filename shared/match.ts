@@ -76,3 +76,17 @@ export function pairLeadsWithBrainstorms<L extends MatchableAgent & { readonly i
   }
   return { pairs, unpaired: brainstorms.filter((b) => !claimed.has(b.id)) };
 }
+
+/**
+ * The brainstorm `lead` pairs with when matched against the whole live lead set, so every caller agrees.
+ * `lead` is added to the set if absent (e.g. a not-yet-listed target).
+ */
+export function brainstormForLead<L extends MatchableAgent & { readonly id: string }, B extends MatchableAgent & { readonly id: string }>(
+  lead: L,
+  liveLeads: readonly L[],
+  brainstorms: readonly B[],
+  cfg: LeadKeyConfig,
+): B | undefined {
+  const all = liveLeads.some((l) => l.id === lead.id) ? liveLeads : [...liveLeads, lead];
+  return pairLeadsWithBrainstorms(all, brainstorms, cfg).pairs.get(lead.id);
+}

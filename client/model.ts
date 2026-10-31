@@ -1,7 +1,6 @@
 import {
   isLeadAgent,
   isLeadAwaitingAub,
-  matchBrainstormForLead,
   pairLeadsWithBrainstorms,
   needsAubStampMs,
   needsAubReasonText,
@@ -173,6 +172,7 @@ export function raisedHandsQueue(
   const leads = live.filter((a) => agentKind(a, cfg) === "lead");
   const brainstorms = live.filter((a) => agentKind(a, cfg) === "brainstorm");
   const queue: { item: RaisedHandItem; ms: number }[] = [];
+  const { pairs } = pairLeadsWithBrainstorms(leads, brainstorms, cfg);
   for (const lead of leads) {
     if (!isLeadAwaitingAub(lead)) continue;
     const ms = flagTimeMs(lead);
@@ -180,7 +180,7 @@ export function raisedHandsQueue(
       ms,
       item: {
         lead,
-        brainstorm: matchBrainstormForLead(lead, brainstorms, cfg),
+        brainstorm: pairs.get(lead.id),
         reason: needsAubReasonText(lead.labels),
         flaggedAt: Number.isFinite(ms) ? new Date(ms).toISOString() : "",
       },
