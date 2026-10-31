@@ -1,12 +1,23 @@
 import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { Icon, SidebarRow } from "@getpaseo/plugin/client/ui";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
-import { isWaitingOnAub, type TrackerConfig } from "../shared/config";
+import { isLeadAwaitingAub, matchBrainstormForLead, type TrackerConfig } from "../shared/config";
+import { BrainstormChip, useLeadBrainstorm } from "./brainstorm-link";
 import { useBoardConfig } from "./config";
-import { agentKind, analyzeBrainstormCoverage, compareAgents, isTracked, sidebarTitle, type BoardAgent } from "./model";
+import {
+  agentKind,
+  compareAgents,
+  isTracked,
+  leadArea,
+  orphanBrainstorms,
+  raisedHandsQueue,
+  relativeTime,
+  sidebarTitle,
+  type BoardAgent,
+} from "./model";
 import { BOARD_SCREEN, OPEN_AGENT_SCREEN, WORKSPACES_SCREEN, navigationOf } from "./navigation";
-import { useBoard, useSubagentWatch } from "./store";
+import { useBoard, useNow, useSubagentWatch } from "./store";
 import { attentionLabel, Chip, dotIcon, statusColor, subagentLabel } from "./ui";
 
 interface Section {
@@ -21,25 +32,34 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
   const { theme, currentScreen, openScreen } = props;
   const board = useBoard();
   const cfg = useBoardConfig();
+  const now = useNow();
   const [collapsed, setCollapsed] = useState(() => new Set(collapsedSections));
-  const { sections, leads, running } = useMemo(() => {
+  const [queueOpen, setQueueOpen] = useState(false);
+  // Brainstorms are shown as chips on their lead (plus "no lead" rows) instead of a tracker section.
+  const linked = cfg.linkBrainstorms && cfg.leadsPreset && cfg.brainstormPreset;
+  const { sections, leads, brainstorms, running } = useMemo(() => {
     const agents = [...board.agents.values()].sort(compareAgents);
+    const live = agents.filter((agent) => !agent.archivedAt && agent.status !== "closed");
     return {
-      leads: cfg.leadsPreset ? agents.filter((agent) => agentKind(agent, cfg) === "lead") : [],
+      leads: cfg.leadsPreset ? live.filter((agent) => agentKind(agent, cfg) === "lead") : [],
+      brainstorms: live.filter((agent) => agentKind(agent, cfg) === "brainstorm"),
       sections: cfg.trackers
         .filter((tracker) => !(cfg.leadsPreset && tracker.kind === "leads"))
+        .filter((tracker) => !(linked && tracker.kind === "brainstorm"))
         .map(
         (tracker): Section => ({ tracker, agents: agents.filter((agent) => isTracked(agent, tracker, cfg)) }),
         ),
       running: agents.filter((agent) => agent.status === "running").length,
     };
-  }, [board.agents, cfg]);
-  const coverage = useMemo(
-    () =>
-      cfg.brainstormPreset
-        ? analyzeBrainstormCoverage([...board.agents.values()], cfg)
-        : { candidates: [], missingLeads: [] },
-    [board.agents, cfg],
+  }, [board.agents, cfg, linked]);
+  const queue = useMemo(() => raisedHandsQueue([...board.agents.values()], cfg), [board.agents, cfg]);
+  const waitingLeads = useMemo(
+    () => leads.filter((agent) => isLeadAwaitingAub(agent, brainstorms, cfg)).length,
+    [leads, brainstorms, cfg],
+  );
+  const orphans = useMemo(
+    () => (linked ? orphanBrainstorms(leads, brainstorms, cfg) : []),
+    [linked, leads, brainstorms, cfg],
   );
   const watched = useMemo(
     () =>
@@ -95,6 +115,13 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
       },
       muted: { color: theme.colors.foregroundMuted, fontSize: 12 },
       empty: { color: theme.colors.foregroundMuted, fontSize: 12, paddingHorizontal: 28, paddingVertical: 4 },
+      queueRow: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+      },
       divider: { height: 1, marginTop: 6, backgroundColor: theme.colors.border },
     }),
     [theme],
@@ -105,6 +132,10 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
     if (navigation) navigation.openAgent({ agentId: agent.id });
     else openScreen({ screenId: OPEN_AGENT_SCREEN, params: { agentId: agent.id } });
   };
+  const { openOrCreate, busyLeadId } = useLeadBrainstorm((agentId) => {
+    if (navigation) navigation.openAgent({ agentId });
+    else openScreen({ screenId: OPEN_AGENT_SCREEN, params: { agentId } });
+  });
   const openBoard = () => openScreen({ screenId: BOARD_SCREEN });
   const isOpen = (agent: BoardAgent) =>
     currentScreen?.screenId === OPEN_AGENT_SCREEN && currentScreen.params.agentId === agent.id;
@@ -118,13 +149,14 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
       return next;
     });
 
-  const row = (agent: BoardAgent, sectionId: string) => {
-    const waitingOnAub = agentKind(agent, cfg) === "lead" && isWaitingOnAub(agent.labels);
+  const row = (agent: BoardAgent, sectionId: string, extra?: ReactNode) => {
+    const waitingOnAub = agentKind(agent, cfg) === "lead" && isLeadAwaitingAub(agent, brainstorms, cfg);
     const attention = attentionLabel(agent);
     const subagents = subagentLabel(board.subagents.get(agent.id));
     const trailing =
-      waitingOnAub || attention || subagents ? (
+      waitingOnAub || attention || subagents || extra ? (
         <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
+          {extra}
           {waitingOnAub ? <Chip theme={theme} label="🙋 waiting on you" tone="warning" /> : null}
           {subagents ? <Chip theme={theme} label={subagents} tone="accent" /> : null}
           {attention ? (
@@ -142,6 +174,21 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
         trailing={trailing}
         onPress={() => open(agent)}
       />
+    );
+  };
+
+  const leadRow = (lead: BoardAgent) => {
+    if (!linked) return row(lead, "pinned-leads");
+    const brainstorm = matchBrainstormForLead(lead, brainstorms, cfg);
+    return row(
+      lead,
+      "pinned-leads",
+      <BrainstormChip
+        theme={theme}
+        exists={brainstorm !== undefined}
+        busy={busyLeadId === lead.id}
+        onPress={() => void openOrCreate(lead, brainstorm)}
+      />,
     );
   };
 
@@ -174,20 +221,6 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
             ) : null}
           </>
         )}
-        {!shut && tracker.kind === "brainstorm" && (coverage.candidates.length > 0 || coverage.missingLeads.length > 0) ? (
-          <SidebarRow
-            id="brainstorm-coverage"
-            icon="LayoutList"
-            label={
-              coverage.missingLeads.length > 0 && coverage.candidates.length > 0
-                ? `${coverage.missingLeads.length} missing · ${coverage.candidates.length} to rename`
-                : coverage.missingLeads.length > 0
-                  ? `${coverage.missingLeads.length} active without brainstorm`
-                  : `${coverage.candidates.length} to rename`
-            }
-            onPress={openBoard}
-          />
-        ) : null}
       </View>
     );
   };
@@ -214,23 +247,61 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
           tone={board.status === "error" ? "danger" : running > 0 ? "accent" : "muted"}
         />
       </Pressable>
+      {queue.length > 0 ? (
+        <View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${queue.length} waiting on you, ${queueOpen ? "collapse" : "expand"}`}
+            onPress={() => setQueueOpen((v) => !v)}
+            style={styles.queueRow}
+          >
+            <Chip theme={theme} label={`🙋 ${queue.length}`} tone="warning" />
+            <Text style={styles.muted}>{queueOpen ? "Raised hands" : "Raised hands, tap to view"}</Text>
+          </Pressable>
+          {queueOpen
+            ? queue.map((item, index) => (
+                <View key={item.lead.id} style={[styles.queueRow, { alignItems: "flex-start" }]}>
+                  <Text style={styles.muted}>{index + 1}.</Text>
+                  <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                    <Text style={[styles.muted, { color: theme.colors.foreground }]} numberOfLines={1}>
+                      {leadArea(item.lead, cfg)} · {relativeTime(item.flaggedAt, now)}
+                    </Text>
+                    <Text style={styles.muted} numberOfLines={2}>
+                      {item.reason}
+                    </Text>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open brainstorm for ${leadArea(item.lead, cfg)}`}
+                    disabled={busyLeadId === item.lead.id}
+                    onPress={() => void openOrCreate(item.lead, item.brainstorm)}
+                  >
+                    <Chip theme={theme} label={busyLeadId === item.lead.id ? "…" : "Open brainstorm"} tone="accent" />
+                  </Pressable>
+                </View>
+              ))
+            : null}
+          <View style={styles.divider} />
+        </View>
+      ) : null}
       {cfg.leadsPreset ? (
         <>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle} numberOfLines={1}>
               Leads
             </Text>
-            {leads.filter((agent) => isWaitingOnAub(agent.labels)).length > 0 ? (
+            {waitingLeads > 0 ? (
               <Chip
                 theme={theme}
-                label={`🙋 Waiting on you (${leads.filter((agent) => isWaitingOnAub(agent.labels)).length})`}
+                label={`🙋 Waiting on you (${waitingLeads})`}
                 tone="warning"
               />
             ) : null}
             {leads.some((agent) => agent.requiresAttention) ? <Chip theme={theme} label="!" tone="warning" /> : null}
             <Text style={styles.muted}>{leads.length}</Text>
           </View>
-          {leads.length === 0 ? <Text style={styles.empty}>None active</Text> : leads.map((agent) => row(agent, "pinned-leads"))}
+          {leads.length === 0 ? <Text style={styles.empty}>None active</Text> : leads.map(leadRow)}
+          {orphans.map((agent) => row(agent, "orphan-brainstorms", <Chip theme={theme} label="no lead" />))}
           <View style={styles.divider} />
         </>
       ) : null}

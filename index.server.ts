@@ -58,6 +58,14 @@ export default function contribute(server: PluginServerContext) {
     if (handoffs.config.needsAubPrompt) {
       systemPrompt = appendLine(systemPrompt, handoffs.config.needsAubPrompt);
     }
+    for (const rule of handoffs.config.guidanceRules) {
+      const title = rule.title.trim();
+      const text = rule.text.trim();
+      const formatted = title && text ? `## ${title}\n${text}` : title ? `## ${title}` : text;
+      if (formatted) {
+        systemPrompt = appendLine(systemPrompt, formatted);
+      }
+    }
     if (handoffs.config.imagePrompt) {
       systemPrompt = appendLine(systemPrompt, handoffs.config.imagePrompt);
     }
@@ -74,7 +82,6 @@ export default function contribute(server: PluginServerContext) {
   server.on("agent.turn_started", ({ agent }, { paseo }) => {
     autoArchiver.bind(paseo);
     needsAubWatcher.bind(paseo);
-    void needsAubWatcher.onTurnStarted(agent.id, paseo);
     return handoffs.onTurnStarted(agent, paseo);
   });
   server.on("agent.archived", ({ agent }) => handoffs.onArchived(agent));
