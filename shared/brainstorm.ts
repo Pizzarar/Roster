@@ -49,6 +49,22 @@ export const checkInLeadsRpc = defineRpc({
   }),
 });
 
+const handActionOutput = z.object({ ok: z.boolean(), message: z.string() });
+
+export const clearHandRpc = defineRpc({
+  name: "needs-aub.clear",
+  /** `flagAt` and `reason` are what the UI showed; a lead whose flag has since changed is left alone. */
+  input: z.object({ leadId: z.string(), flagAt: z.string(), reason: z.string() }),
+  output: handActionOutput,
+});
+
+export const snoozeHandRpc = defineRpc({
+  name: "needs-aub.snooze",
+  /** `flagAt` is the lead's current `needs-aub-at`; the snooze only applies to that flag. */
+  input: z.object({ leadId: z.string(), flagAt: z.string(), reason: z.string() }),
+  output: handActionOutput,
+});
+
 const PROVIDER_AUTO_MODES: Record<string, string> = {
   claude: "auto",
   "antigravity-cli": "accept-edits",

@@ -17,7 +17,7 @@ import {
   type LiveWorktree,
 } from "./model";
 import { boardStore, useBoard, useNow, useSubagentWatch, type SubagentCount } from "./store";
-import { isLeadAwaitingAub, PARENT_LABEL, type BoardConfig } from "../shared/config";
+import { isHandSnoozed, isLeadAwaitingAub, PARENT_LABEL, type BoardConfig } from "../shared/config";
 import { stopAgentRpc } from "../shared/stop";
 import { fixChainedLeadsRpc, type HandoffRecord } from "../shared/handoff";
 import { createBrainstormRpc, renameBrainstormRpc } from "../shared/brainstorm";
@@ -200,7 +200,7 @@ function AgentRow({
             >
               {displayTitle(agent)}
             </Text>
-            {kind === "lead" && isLeadAwaitingAub(agent) ? (
+            {kind === "lead" && isLeadAwaitingAub(agent) && !isHandSnoozed(agent.labels, now) ? (
               <Chip theme={theme} label="🙋 waiting on you" tone="warning" />
             ) : null}
             {attention ? (

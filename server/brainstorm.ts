@@ -7,6 +7,10 @@ import {
   isBrainstormAgent,
   isLeadAgent,
   isWaitingOnAub,
+  clearHandLabels,
+  handMatches,
+  isDuplicateClick,
+  snoozeHandLabels,
   aubMayHaveReplied,
   aubReplied,
   brainstormForLead,
@@ -18,6 +22,7 @@ import {
   normalizePath,
   unhandledNeedsAubReason,
   type BoardConfig,
+  type ExpectedHand,
 } from "../shared/config";
 
 export type PaseoApi = Parameters<Parameters<PluginServerContext["handle"]>[1]>[1]["paseo"];
@@ -247,6 +252,47 @@ export async function updateAgentLabels(agentId: string, labels: Readonly<Record
   }
 }
 
+/** Lead id -> when Aub's last clear/snooze was accepted; stamped synchronously before the label write's await. */
+const recentHandActionAt = new Map<string, number>();
+
+export async function aubHandAction(
+  kind: "clear" | "snooze",
+  leadId: string,
+  expected: ExpectedHand,
+  paseo: PaseoApi,
+): Promise<{ ok: boolean; message: string }> {
+  const now = Date.now();
+  for (const [id, at] of recentHandActionAt) if (!isDuplicateClick(at, now)) recentHandActionAt.delete(id);
+  if (isDuplicateClick(recentHandActionAt.get(leadId), now)) return { ok: true, message: "Already done" };
+  if (kind === "snooze" && !expected.flagAt) return { ok: false, message: "Still being routed, try again in a moment" };
+  recentHandActionAt.set(leadId, now);
+  // Compare before write: the flag may have been re-raised or cleared since the UI showed it.
+  const current = await freshLeadLabels(paseo, leadId);
+  if (!current || !handMatches(current, expected)) {
+    recentHandActionAt.delete(leadId);
+    return { ok: false, message: "hand changed, not cleared" };
+  }
+  const ok = await updateAgentLabels(
+    leadId,
+    kind === "clear" ? clearHandLabels(now) : snoozeHandLabels(expected.flagAt, now),
+  );
+  if (!ok) {
+    recentHandActionAt.delete(leadId);
+    return { ok: false, message: `Could not ${kind} the hand` };
+  }
+  console.log(`${kind === "clear" ? "cleared" : "snoozed 1h"} raised hand of ${leadId.slice(0, 8)} (by aub)`);
+  return { ok: true, message: kind === "clear" ? "Cleared" : "Snoozed 1h" };
+}
+
+/** The lead's labels right now (not a snapshot taken earlier in a pass); null when the lookup fails. */
+async function freshLeadLabels(paseo: PaseoApi, leadId: string): Promise<Record<string, string> | null> {
+  const listed = await paseo.agents
+    .list({ includeBackground: true, filter: { includeBackground: true }, page: { limit: AGENT_PAGE_LIMIT } })
+    .catch(() => null);
+  const agent = listed?.entries.find((e) => e.agent.id === leadId)?.agent;
+  return agent ? (agent.labels ?? {}) : null;
+}
+
 async function routedBaselineMs(paseo: PaseoApi, brainstormId: string | undefined): Promise<number> {
   let baseline = Date.now();
   if (!brainstormId) return baseline;
@@ -322,6 +368,12 @@ export class NeedsAubWatcher {
         if (!cfg.needsAubAutoSpawn || this.inFlight.has(lead.id)) continue;
         this.inFlight.add(lead.id);
         try {
+          // Compare before write: Aub may have cleared or changed the flag since the snapshot above.
+          const stillFlagged = async () => unhandledNeedsAubReason((await freshLeadLabels(p, lead.id)) ?? undefined) === reason;
+          if (!(await stillFlagged())) {
+            this.routed.delete(lead.id);
+            continue;
+          }
           let pending = this.routed.get(lead.id);
           if (pending?.reason !== reason) {
             this.routed.delete(lead.id);
@@ -350,6 +402,10 @@ export class NeedsAubWatcher {
               },
             };
             this.routed.set(lead.id, pending);
+          }
+          if (!(await stillFlagged())) {
+            this.routed.delete(lead.id);
+            continue;
           }
           if (await updateAgentLabels(lead.id, pending.labels)) this.routed.delete(lead.id);
         } catch (error) {

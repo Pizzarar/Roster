@@ -4,7 +4,9 @@ import { Icon, SidebarRow, useToast } from "@getpaseo/plugin/client/ui";
 import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useLeadBrainstorm } from "./brainstorm-link";
-import { checkInLeadsRpc } from "../shared/brainstorm";
+import { checkInLeadsRpc, clearHandRpc, snoozeHandRpc } from "../shared/brainstorm";
+import { CLEAR_HAND_DEDUPE_MS } from "../shared/clear-hand";
+import { unhandledNeedsAubReason } from "../shared/needs-aub";
 import { CHECK_IN_DEDUPE_MS, formatQuiet, leadHealth } from "../shared/check-in";
 import { useBoardConfig } from "./config";
 import {
@@ -33,6 +35,10 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
   const toast = useToast();
   const checkInRpc = useRpc(checkInLeadsRpc);
   /** Leads whose check-in button is locked (in flight, then a few seconds after). */
+  const clearRpc = useRpc(clearHandRpc);
+  const snoozeRpc = useRpc(snoozeHandRpc);
+  /** Lead id -> "cleared" / "snoozed" while its hand buttons are locked (in flight, then a few seconds after). */
+  const [handSent, setHandSent] = useState<ReadonlyMap<string, string>>(new Map());
   const [lockedLeads, setLockedLeads] = useState<ReadonlySet<string>>(new Set());
   const { lanes, running } = useMemo(() => {
     const agents = [...board.agents.values()].sort(compareAgents);
@@ -44,14 +50,13 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
       running: agents.filter((agent) => agent.status === "running").length,
     };
   }, [board.agents, cfg]);
-  const queue = useMemo(() => raisedHandsQueue([...board.agents.values()], cfg), [board.agents, cfg]);
+  const queue = useMemo(() => raisedHandsQueue([...board.agents.values()], cfg, now), [board.agents, cfg, now]);
   const workers = useMemo(
     () => runningWorkersByLead([...board.agents.values()], cfg, board.handoffs.relays),
     [board.agents, board.handoffs.relays, cfg],
   );
   const handAt = queue.length > 0 ? handIndex % queue.length : 0;
   const hand: RaisedHandItem | undefined = queue[handAt];
-  const handLeadIds = useMemo(() => new Set(queue.map((item) => item.lead.id)), [queue]);
 
   const styles = useMemo(
     () => ({
@@ -112,6 +117,53 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
       setTimeout(() => setLockedLeads((s) => new Set([...s].filter((id) => id !== lead.id))), CHECK_IN_DEDUPE_MS);
     }
   };
+  const handAction = async (item: RaisedHandItem, kind: "clear" | "snooze") => {
+    const lead = item.lead;
+    if (handSent.has(lead.id)) return;
+    const unlock = () => setHandSent((m) => new Map([...m].filter(([id]) => id !== lead.id)));
+    const sent = kind === "clear" ? "cleared" : "snoozed";
+    setHandSent((m) => new Map(m).set(lead.id, sent));
+    try {
+      // An unhandled flag may get a new `needs-aub-at` from the watcher before the click lands, so don't key on it.
+      const flagAt = unhandledNeedsAubReason(lead.labels) ? "" : (lead.labels["needs-aub-at"]?.trim() ?? "");
+      const expected = { leadId: lead.id, flagAt, reason: item.reason };
+      const res = await (kind === "clear" ? clearRpc(expected) : snoozeRpc(expected));
+      if (res.ok) setTimeout(unlock, CLEAR_HAND_DEDUPE_MS);
+      else {
+        unlock();
+        toast.error(res.message);
+      }
+    } catch (error) {
+      unlock();
+      toast.error(`Could not ${kind}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const handButtons = (item: RaisedHandItem) => {
+    const sent = handSent.get(item.lead.id);
+    const canSnooze = !!item.lead.labels["needs-aub-at"] && item.lead.labels["needs-aub"]?.toLowerCase() === "handled";
+    return (
+      <>
+        {canSnooze ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Snooze raised hand for ${item.lead.title ?? "lead"} for 1 hour`}
+            disabled={sent !== undefined}
+            onPress={() => void handAction(item, "snooze")}
+          >
+            <Chip theme={theme} label={sent === "snoozed" ? "✓ 1h" : "💤 1h"} tone={sent === "snoozed" ? "accent" : "muted"} />
+          </Pressable>
+        ) : null}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Clear raised hand for ${item.lead.title ?? "lead"}`}
+          disabled={sent !== undefined}
+          onPress={() => void handAction(item, "clear")}
+        >
+          <Chip theme={theme} label={sent === "cleared" ? "✓" : "✕"} tone={sent === "cleared" ? "accent" : "muted"} />
+        </Pressable>
+      </>
+    );
+  };
   const openBoard = () => openScreen({ screenId: BOARD_SCREEN });
   const isOpen = (agent: BoardAgent | undefined) =>
     agent !== undefined &&
@@ -128,7 +180,8 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
     const { lead, brainstorm } = lane;
     const noBrainstorm = !brainstorm && cfg.brainstormPreset;
     const busy = lead !== undefined && busyLeadId === lead.id;
-    const raised = lead !== undefined && handLeadIds.has(lead.id);
+    const raisedItem = lead ? queue.find((item) => item.lead.id === lead.id) : undefined;
+    const raised = raisedItem !== undefined;
     const attending = brainstorm ?? lead;
     const attention = attending ? attentionLabel(attending) : null;
     const workerCount = lead ? (workers.get(lead.id) ?? 0) : 0;
@@ -177,7 +230,16 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
         onPress={() => openLane(lane)}
         trailing={
           <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
-            {raised ? <Text style={styles.text}>🙋</Text> : null}
+            {raised && raisedItem ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Clear raised hand for ${lane.title}`}
+                disabled={handSent.has(raisedItem.lead.id)}
+                onPress={() => void handAction(raisedItem, "clear")}
+              >
+                <Text style={styles.text}>{handSent.has(raisedItem.lead.id) ? "✓" : "🙋"}</Text>
+              </Pressable>
+            ) : null}
             {attention ? <Chip theme={theme} label="!" tone="warning" /> : null}
             {noBrainstorm ? <Text style={styles.muted}>{busy ? "…" : "＋ chat"}</Text> : null}
             {healthChip}
@@ -260,6 +322,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
               >
                 <Chip theme={theme} label={busyLeadId === hand.lead.id ? "…" : "Open"} tone="accent" />
               </Pressable>
+              {handButtons(hand)}
             </View>
           </View>
           {handsOpen
@@ -272,6 +335,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
                     <Pressable accessibilityRole="button" onPress={() => openHand(item)}>
                       <Chip theme={theme} label="Open" tone="accent" />
                     </Pressable>
+                    {handButtons(item)}
                   </View>
                   <Text style={styles.muted} numberOfLines={2}>
                     {item.reason}

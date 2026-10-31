@@ -1,5 +1,6 @@
 import {
   isLeadAgent,
+  isHandSnoozed,
   isLeadAwaitingAub,
   pairLeadsWithBrainstorms,
   needsAubStampMs,
@@ -168,6 +169,7 @@ export interface RaisedHandItem {
 export function raisedHandsQueue(
   agents: readonly BoardAgent[],
   cfg: BoardConfig,
+  nowMs = Date.now(),
 ): RaisedHandItem[] {
   const live = agents.filter((a) => !a.archivedAt && a.status !== "closed");
   const leads = live.filter((a) => agentKind(a, cfg) === "lead");
@@ -175,7 +177,7 @@ export function raisedHandsQueue(
   const queue: { item: RaisedHandItem; ms: number }[] = [];
   const { pairs } = pairLeadsWithBrainstorms(leads, brainstorms, cfg);
   for (const lead of leads) {
-    if (!isLeadAwaitingAub(lead)) continue;
+    if (!isLeadAwaitingAub(lead) || isHandSnoozed(lead.labels, nowMs)) continue;
     const ms = flagTimeMs(lead);
     queue.push({
       ms,
