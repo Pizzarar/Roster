@@ -25,6 +25,7 @@ import {
   DEFAULT_LEAD_PROMPT,
   DEFAULT_NEEDS_AUB_PROMPT,
   rosterSettings,
+  type GuidanceRule,
   type RosterSettings,
   type Tracker,
   type TrackerKind,
@@ -104,8 +105,9 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
     [],
   );
   const trackersDirty = JSON.stringify(draft.values.trackers) !== JSON.stringify(settings.values.trackers);
+  const rulesDirty = JSON.stringify(draft.values.guidanceRules) !== JSON.stringify(settings.values.guidanceRules);
   const dirty =
-    trackersDirty || TEXT_KEYS.some((key) => draft.values[key] !== settings.values[key]);
+    trackersDirty || rulesDirty || TEXT_KEYS.some((key) => draft.values[key] !== settings.values[key]);
   const invalid =
     PATTERN_KEYS.some((key) => patternError(draft.values[key]) !== null) ||
     daysError(draft.values.staleWorkspaceDays) !== null ||
@@ -132,12 +134,36 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
       }),
     [setTrackers],
   );
+  const setRules = useCallback(
+    (update: (rules: GuidanceRule[]) => GuidanceRule[]) =>
+      setDraft((current) => ({ ...current, values: { ...current.values, guidanceRules: update(current.values.guidanceRules) } })),
+    [],
+  );
+  const editRule = useCallback(
+    (id: string, patch: Partial<GuidanceRule>) =>
+      setRules((rules) => rules.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule))),
+    [setRules],
+  );
+
+  const guidanceChars = useMemo(
+    () =>
+      draft.values.guidanceRules
+        .filter((r) => r.enabled && (r.title.trim() || r.text.trim()))
+        .reduce((sum, r) => {
+          const title = r.title.trim();
+          const text = r.text.trim();
+          const formatted = title && text ? `## ${title}\n${text}` : title ? `## ${title}` : text;
+          return sum + formatted.length;
+        }, 0),
+    [draft.values.guidanceRules],
+  );
 
   const buildValues = useCallback(
     (patch?: Partial<RosterSettings>): RosterSettings => {
       const values: RosterSettings = { ...settings.values };
       for (const key of TEXT_KEYS) values[key] = draft.values[key];
       values.trackers = draft.values.trackers;
+      values.guidanceRules = draft.values.guidanceRules;
       return patch ? { ...values, ...patch } : values;
     },
     [settings.values, draft.values],
@@ -630,6 +656,63 @@ function Form({ settings, theme }: { settings: Ready; theme: PluginSurfaceProps[
             error={daysError(draft.values.autoArchiveWorkspaceDays)}
           />
         </SettingsCard>
+      </SettingsSection>
+      <SettingsSection title="Guidance rules">
+        <SettingsCard>
+          <SettingsAction
+            label={
+              guidanceChars > 2048
+                ? `Warning: enabled rules total ${guidanceChars} chars (> 2 KB). Some worker providers (e.g. DeepSeek) have payload limits.`
+                : `Enabled rules total ${guidanceChars} chars (recommended under 2,048 chars). Applied to newly created agents.`
+            }
+            actionLabel="+ Add rule"
+            disabled={settings.saving}
+            onPress={() =>
+              setRules((rules) => [
+                ...rules,
+                { id: newId(), title: "", text: "", enabled: true },
+              ])
+            }
+          />
+          {rulesDirty ? (
+            <SettingsAction
+              label="Guidance rules changed"
+              actionLabel="Save"
+              disabled={invalid || settings.saving}
+              onPress={() => void save()}
+            />
+          ) : null}
+        </SettingsCard>
+        {draft.values.guidanceRules.map((rule) => (
+          <SettingsCard key={`${rule.id}-${formKey}`}>
+            <SettingsSwitch
+              label="Enabled"
+              value={rule.enabled}
+              disabled={settings.saving}
+              onValueChange={(enabled) => editRule(rule.id, { enabled })}
+            />
+            <SettingsInput
+              label="Title"
+              hint="Injected as ## <Title> above the rule text."
+              initialValue={rule.title}
+              onChangeText={(title) => editRule(rule.id, { title })}
+              disabled={settings.saving}
+            />
+            <SettingsInput
+              label="Rule text"
+              hint="Cross-provider instruction injected into new agents."
+              initialValue={rule.text}
+              onChangeText={(text) => editRule(rule.id, { text })}
+              disabled={settings.saving}
+            />
+            <SettingsAction
+              label="Delete this rule"
+              actionLabel="Delete"
+              disabled={settings.saving}
+              onPress={() => setRules((rules) => rules.filter((r) => r.id !== rule.id))}
+            />
+          </SettingsCard>
+        ))}
       </SettingsSection>
       <SettingsSection title="Save">
         <SettingsCard>

@@ -58,6 +58,14 @@ export default function contribute(server: PluginServerContext) {
     if (handoffs.config.needsAubPrompt) {
       systemPrompt = appendLine(systemPrompt, handoffs.config.needsAubPrompt);
     }
+    for (const rule of handoffs.config.guidanceRules) {
+      const title = rule.title.trim();
+      const text = rule.text.trim();
+      const formatted = title && text ? `## ${title}\n${text}` : title ? `## ${title}` : text;
+      if (formatted) {
+        systemPrompt = appendLine(systemPrompt, formatted);
+      }
+    }
     if (handoffs.config.imagePrompt) {
       systemPrompt = appendLine(systemPrompt, handoffs.config.imagePrompt);
     }

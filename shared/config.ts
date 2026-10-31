@@ -1,4 +1,4 @@
-import { rosterSettings, type RosterSettings, type Tracker, type TrackerKind } from "./settings";
+import { rosterSettings, type GuidanceRule, type RosterSettings, type Tracker, type TrackerKind } from "./settings";
 
 /** Sub-agent counting: poll the timeline tail of running agents while visible. */
 export const SUBAGENT_POLL_MS = 30_000;
@@ -60,6 +60,7 @@ export interface BoardConfig {
   readonly leadPrompt: string;
   readonly leadPointerPrompt: string;
   readonly imagePrompt: string;
+  readonly guidanceRules: readonly GuidanceRule[];
 }
 
 export const DEFAULT_SETTINGS: RosterSettings = rosterSettings.schema.parse({});
@@ -193,6 +194,7 @@ export function isBrainstormAgent(
 
 export const NEEDS_AUB_LABEL = "needs-aub";
 export const NEEDS_AUB_REASON_LABEL = "needs-aub-reason";
+export const NEEDS_AUB_AT_LABEL = "needs-aub-at";
 
 /** True when a lead has flagged needs-aub (including after auto-spawn sets needs-aub=handled). */
 export function isWaitingOnAub(labels: Readonly<Record<string, string>> | undefined): boolean {
@@ -207,6 +209,14 @@ export function unhandledNeedsAubReason(labels: Readonly<Record<string, string>>
   if (!raw) return null;
   if (/^(?:handled|none|false|cleared|0)$/i.test(raw)) return null;
   return raw;
+}
+
+export function needsAubReasonText(labels: Readonly<Record<string, string>> | undefined): string {
+  return (
+    labels?.[NEEDS_AUB_REASON_LABEL]?.trim() ||
+    unhandledNeedsAubReason(labels) ||
+    "Waiting on your decision"
+  );
 }
 
 export function compileConfig(values: RosterSettings): BoardConfig {
@@ -251,6 +261,7 @@ export function compileConfig(values: RosterSettings): BoardConfig {
     leadPrompt: hasLeads ? (values.leadPromptEnabled ? values.leadPrompt.trim() : "") : "",
     leadPointerPrompt: hasLeads ? (values.leadPointerEnabled ? values.leadPointerPrompt.trim() : "") : "",
     imagePrompt: values.imagePromptEnabled ? values.imagePrompt.trim() : "",
+    guidanceRules: values.guidanceRules.filter((r) => r.enabled && (r.title.trim() || r.text.trim())),
   };
 }
 

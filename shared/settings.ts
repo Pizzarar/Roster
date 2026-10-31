@@ -35,6 +35,30 @@ export const DEFAULT_TRACKERS: Tracker[] = [
   { id: "brainstorm", name: "Brainstorm", kind: "brainstorm", pattern: "", limit: "6" },
 ];
 
+export const guidanceRuleSchema = z.object({
+  id: z.string(),
+  title: z.string().default(""),
+  text: z.string().default(""),
+  enabled: z.boolean().default(true),
+});
+
+export type GuidanceRule = z.output<typeof guidanceRuleSchema>;
+
+export const DEFAULT_GUIDANCE_RULES: GuidanceRule[] = [
+  {
+    id: "critiques-and-proposals",
+    title: "Critiques and proposals",
+    text: 'When Aub asks you to critique a plan or pitch, open with the one principle that decides it (the "why not"), in 1-2 sentences, as a reusable rule. Then give the measurement that would confirm it. Only list gotchas that would change the decision. No exhaustive surveys.',
+    enabled: true,
+  },
+  {
+    id: "model-cost-rule",
+    title: "Model cost rule",
+    text: "Subscriptions carry the volume; pay-as-you-go API is overflow past a cap, never a replacement. Before proposing a cost change, name which cap is actually being hit.",
+    enabled: true,
+  },
+];
+
 /**
  * Host-wide settings, edited under Settings → Plugins → Roster.
  * Patterns are case-insensitive regular expressions; empty disables one.
@@ -95,6 +119,7 @@ export const rosterSettings = defineSettings({
     leadPointerPrompt: z.string().default(DEFAULT_LEAD_POINTER),
     imagePromptEnabled: z.boolean().default(true),
     imagePrompt: z.string().default(DEFAULT_IMAGE_PROMPT),
+    guidanceRules: z.array(guidanceRuleSchema).default(() => DEFAULT_GUIDANCE_RULES.map((rule) => ({ ...rule }))),
   }),
 });
 

@@ -1,4 +1,13 @@
-import { isLeadAgent, normalizePath, PARENT_LABEL, type BoardConfig, type TrackerConfig } from "../shared/config";
+import {
+  isLeadAgent,
+  isWaitingOnAub,
+  NEEDS_AUB_AT_LABEL,
+  needsAubReasonText,
+  normalizePath,
+  PARENT_LABEL,
+  type BoardConfig,
+  type TrackerConfig,
+} from "../shared/config";
 
 export type AgentStatus = "initializing" | "idle" | "running" | "error" | "closed";
 
@@ -72,6 +81,80 @@ export function leadArea(lead: BoardAgent, cfg: BoardConfig): string {
     .replace(/\s+\bord\d+\b.*$/i, "")
     .trim();
   return stripped || basename(lead.cwd);
+}
+
+/** Match a brainstorm to a lead by `lead=<key>` label first, then by workspaceId or normalized cwd. */
+export function matchBrainstormForLead(
+  lead: BoardAgent,
+  brainstorms: readonly BoardAgent[],
+  cfg: BoardConfig,
+): BoardAgent | undefined {
+  const leadKey = lead.labels[cfg.labels.lead]?.trim().toLowerCase();
+  if (leadKey) {
+    const byKey = brainstorms.find((b) => b.labels[cfg.labels.lead]?.trim().toLowerCase() === leadKey);
+    if (byKey) return byKey;
+  }
+  if (lead.workspaceId) {
+    const byWs = brainstorms.find((b) => b.workspaceId === lead.workspaceId);
+    if (byWs) return byWs;
+  }
+  const leadCwd = normalizePath(lead.cwd);
+  return brainstorms.find((b) => normalizePath(b.cwd) === leadCwd);
+}
+
+/** Live brainstorms that do not match any live lead. */
+export function orphanBrainstorms(
+  leads: readonly BoardAgent[],
+  brainstorms: readonly BoardAgent[],
+  cfg: BoardConfig,
+): BoardAgent[] {
+  const matchedIds = new Set<string>();
+  for (const lead of leads) {
+    const matched = matchBrainstormForLead(lead, brainstorms, cfg);
+    if (matched) matchedIds.add(matched.id);
+  }
+  return brainstorms.filter((b) => !matchedIds.has(b.id));
+}
+
+export interface RaisedHandItem {
+  readonly lead: BoardAgent;
+  readonly brainstorm: BoardAgent | undefined;
+  readonly reason: string;
+  readonly flaggedAt: string;
+}
+
+/**
+ * Flagged leads in FIFO order by flag time (`needs-aub-at`, fallback `updatedAt`).
+ * Clears when Aub has sent a message in that project's brainstorm after `flaggedAt` (`lastUserMessageAt`).
+ */
+export function raisedHandsQueue(
+  agents: readonly BoardAgent[],
+  cfg: BoardConfig,
+): RaisedHandItem[] {
+  const live = agents.filter((a) => !a.archivedAt && a.status !== "closed");
+  const leads = live.filter((a) => agentKind(a, cfg) === "lead");
+  const brainstorms = live.filter((a) => agentKind(a, cfg) === "brainstorm");
+  const queue: RaisedHandItem[] = [];
+  for (const lead of leads) {
+    if (!isWaitingOnAub(lead.labels)) continue;
+    const flaggedAt = lead.labels[NEEDS_AUB_AT_LABEL]?.trim() || lead.updatedAt || lead.createdAt;
+    const brainstorm = matchBrainstormForLead(lead, brainstorms, cfg);
+    if (brainstorm?.lastUserMessageAt) {
+      const userMs = Date.parse(brainstorm.lastUserMessageAt);
+      const flagMs = Date.parse(flaggedAt);
+      if (Number.isFinite(userMs) && Number.isFinite(flagMs) && userMs > flagMs) {
+        continue;
+      }
+    }
+    queue.push({
+      lead,
+      brainstorm,
+      reason: needsAubReasonText(lead.labels),
+      flaggedAt,
+    });
+  }
+  queue.sort((a, b) => a.flaggedAt.localeCompare(b.flaggedAt));
+  return queue;
 }
 
 export interface BrainstormCandidate {

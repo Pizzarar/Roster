@@ -6,6 +6,7 @@ import {
   isBrainstormAgent,
   isLeadAgent,
   isWaitingOnAub,
+  NEEDS_AUB_AT_LABEL,
   NEEDS_AUB_LABEL,
   NEEDS_AUB_REASON_LABEL,
   normalizePath,
@@ -347,6 +348,7 @@ export class NeedsAubWatcher {
       .map((e) => e.agent)
       .filter((a) => !a.archivedAt && a.status !== "closed");
     const leads = live.filter((a) => isLeadAgent(a.title, a.labels ?? {}, cfg));
+    const brainstorms = live.filter((a) => isBrainstormAgent(a.title, a.labels ?? {}, cfg));
 
     for (const lead of leads) {
       const reason = unhandledNeedsAubReason(lead.labels);
@@ -366,9 +368,11 @@ export class NeedsAubWatcher {
             p,
             cfg,
           );
+          const flaggedAt = new Date().toISOString();
           await updateAgentLabels(lead.id, [
             `${NEEDS_AUB_LABEL}=handled`,
             `${NEEDS_AUB_REASON_LABEL}=${reason}`,
+            `${NEEDS_AUB_AT_LABEL}=${flaggedAt}`,
           ]);
         } catch (error) {
           console.error(
@@ -377,19 +381,27 @@ export class NeedsAubWatcher {
         } finally {
           this.inFlight.delete(lead.id);
         }
+      } else if (lead.labels?.[NEEDS_AUB_LABEL]?.toLowerCase() === "handled") {
+        const leadKey = lead.labels?.[cfg.labels.lead]?.trim().toLowerCase();
+        const leadCwd = normalizePath(lead.cwd);
+        const brainstorm = brainstorms.find((b) => {
+          const bLeadKey = b.labels?.[cfg.labels.lead]?.trim().toLowerCase();
+          if (leadKey && bLeadKey && leadKey === bLeadKey) return true;
+          if (lead.workspaceId && b.workspaceId === lead.workspaceId) return true;
+          return normalizePath(b.cwd) === leadCwd;
+        });
+        if (brainstorm?.lastUserMessageAt) {
+          const userMs = Date.parse(brainstorm.lastUserMessageAt);
+          const flagMs = Date.parse(lead.labels?.[NEEDS_AUB_AT_LABEL] ?? lead.updatedAt ?? "");
+          if (Number.isFinite(userMs) && Number.isFinite(flagMs) && userMs > flagMs) {
+            await updateAgentLabels(lead.id, [`${NEEDS_AUB_LABEL}=cleared`]);
+          }
+        }
       }
     }
   }
 
-  async onTurnStarted(agentId: string, paseo: PaseoApi): Promise<void> {
-    const cfg = this.getConfig();
-    const result = await paseo.agents.ref(agentId).refresh().catch(() => null);
-    const agent = result?.agent;
-    if (!agent) return;
-    if (isLeadAgent(agent.title, agent.labels ?? {}, cfg)) {
-      if (agent.labels?.[NEEDS_AUB_LABEL]?.toLowerCase() === "handled") {
-        await updateAgentLabels(agentId, [`${NEEDS_AUB_LABEL}=cleared`]);
-      }
-    }
+  async onTurnStarted(_agentId: string, _paseo: PaseoApi): Promise<void> {
+    // No-op: only clear needs-aub when Aub messages the brainstorm after needs-aub-at.
   }
 }
