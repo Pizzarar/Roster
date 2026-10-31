@@ -14,6 +14,7 @@ import {
   aubMayHaveReplied,
   aubReplied,
   brainstormForLead,
+  resolveLead,
   pairLeadsWithBrainstorms,
   NEEDS_AUB_AT_LABEL,
   NEEDS_AUB_LABEL,
@@ -69,7 +70,32 @@ export async function renameBrainstorm({ agentId, title, leadKey }: RpcInput<typ
   }
 }
 
+/** Brainstorm creation per cwd runs one at a time, so a second click sees the first one's agent. */
+const createLocks = new Map<string, Promise<unknown>>();
+/** cwd -> the brainstorm just created there; the listing can lag behind agents.create, and the title is set later. */
+const recentCreates = new Map<string, { agentId: string; slug: string; title: string; at: number }>();
+export const RECENT_BRAINSTORM_MS = 10 * 60_000;
+const UNLISTED_GRACE_MS = 2 * 60_000;
+
+type CreateResult = { ok: boolean; reused: boolean; message: string; agentId: string };
+
 export async function createBrainstorm(
+  input: RpcInput<typeof createBrainstormRpc>,
+  paseo: PaseoApi,
+  cfg: BoardConfig,
+): Promise<CreateResult> {
+  const key = normalizePath(input.cwd);
+  const previous = createLocks.get(key) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(() => createBrainstormLocked(input, paseo, cfg));
+  createLocks.set(key, run);
+  try {
+    return await run;
+  } finally {
+    if (createLocks.get(key) === run) createLocks.delete(key);
+  }
+}
+
+async function createBrainstormLocked(
   {
     leadId,
     leadTitle,
@@ -86,7 +112,7 @@ export async function createBrainstorm(
   }: RpcInput<typeof createBrainstormRpc>,
   paseo: PaseoApi,
   cfg: BoardConfig,
-) {
+): Promise<CreateResult> {
   const cwdNorm = normalizePath(cwd);
   const rootNorm = projectRootPath ? normalizePath(projectRootPath) : "";
   let matchedLead:
@@ -96,73 +122,64 @@ export async function createBrainstorm(
   let resolvedLeadId = leadId?.trim();
   let resolvedLeadTitle = leadTitle?.trim();
 
-  if (reuseExisting || !leadId || !area) {
-    const listed = await paseo.agents
-      .list({
-        includeBackground: true,
-        filter: { includeBackground: true },
-        sort: [{ key: "updated_at", direction: "desc" }],
-        page: { limit: AGENT_PAGE_LIMIT },
-      })
-      .catch(() => null);
-    const liveAgents = (listed?.entries ?? [])
-      .map((e) => e.agent)
-      .filter((a) => !a.archivedAt && a.status !== "closed");
+  const listed = await paseo.agents
+    .list({
+      includeBackground: true,
+      filter: { includeBackground: true },
+      sort: [{ key: "updated_at", direction: "desc" }],
+      page: { limit: AGENT_PAGE_LIMIT },
+    })
+    .catch(() => null);
+  const allAgents = (listed?.entries ?? []).map((e) => e.agent);
+  const liveAgents = allAgents.filter((a) => !a.archivedAt && a.status !== "closed");
 
-    matchedLead = leadId
-      ? liveAgents.find((a) => a.id === leadId)
-      : liveAgents.find(
-          (a) =>
-            isLeadAgent(a.title, a.labels ?? {}, cfg) &&
-            (normalizePath(a.cwd) === cwdNorm || (rootNorm !== "" && normalizePath(a.cwd) === rootNorm)),
-        );
-
-    resolvedLeadId = leadId?.trim() || matchedLead?.id;
-    resolvedLeadTitle =
-      leadTitle?.trim() ||
-      matchedLead?.title?.trim() ||
-      (matchedLead ? `Agent ${matchedLead.id.slice(0, 7)}` : undefined);
-
-    if (reuseExisting) {
-      const liveBrainstorms = liveAgents.filter((a) => isBrainstormAgent(a.title, a.labels ?? {}, cfg));
-      const target = {
-        labels: matchedLead?.labels,
-        workspaceId: workspaceId ?? (matchedLead as { workspaceId?: string } | undefined)?.workspaceId,
-        cwd,
-      };
-      // Pair against every live lead, so an unlabeled target can't take another lead's keyed brainstorm.
-      const otherLeads = liveAgents.filter(
-        (a) => a.id !== matchedLead?.id && isLeadAgent(a.title, a.labels ?? {}, cfg),
-      );
-      const targetId = matchedLead?.id ?? "__target__";
-      const pair = (t: typeof target) =>
-        brainstormForLead({ id: targetId, ...t }, [...otherLeads, { id: targetId, ...t }], liveBrainstorms, cfg);
-      const existing =
-        pair(target) ?? (rootNorm !== "" ? pair({ ...target, workspaceId: undefined, cwd: rootNorm }) : undefined);
-      if (existing) {
-        if (reason?.trim()) {
-          const leadDesc = resolvedLeadTitle ? `"${resolvedLeadTitle}" (${resolvedLeadId})` : resolvedLeadId ?? cwd;
-          await paseo.agents
-            .ref(existing.id)
-            .send(`Lead ${leadDesc} needs a decision on: ${reason.trim()}\n\nPlease review and surface this for Aub.\n\n${ROSTER_PROMPT_MARKER}`)
-            .catch(() => undefined);
-        }
-        return {
-          ok: true,
-          reused: true,
-          message: `Opened ${existing.title ?? "brainstorm"}`,
-          agentId: existing.id,
-        };
-      }
-    }
+  // The caller's leadId may be stale (an old successor, a closed or retired lead): name the project's current lead.
+  matchedLead = resolveLead(leadId?.trim(), allAgents, { cwd, rootPath: projectRootPath }, {
+    isLead: (a) => isLeadAgent(a.title, a.labels ?? {}, cfg),
+    areaOf: (a) => leadAreaFromTitle(a.title, a.cwd, cfg),
+  });
+  if (matchedLead && matchedLead.id !== leadId?.trim()) {
+    if (leadId) console.log(`brainstorm: lead ${leadId.slice(0, 8)} is stale, using ${matchedLead.id.slice(0, 8)}`);
+    resolvedLeadId = matchedLead.id;
+    resolvedLeadTitle = matchedLead.title?.trim() || `Agent ${matchedLead.id.slice(0, 7)}`;
+  } else if (matchedLead) {
+    resolvedLeadTitle = leadTitle?.trim() || matchedLead.title?.trim() || `Agent ${matchedLead.id.slice(0, 7)}`;
   }
 
-  resolvedLeadId = resolvedLeadId || leadId?.trim() || matchedLead?.id;
-  resolvedLeadTitle =
-    resolvedLeadTitle ||
-    leadTitle?.trim() ||
-    matchedLead?.title?.trim() ||
-    (matchedLead ? `Agent ${matchedLead.id.slice(0, 7)}` : undefined);
+  const reuse = async (existing: { id: string; title: string | null }): Promise<CreateResult> => {
+    if (reason?.trim()) {
+      const leadDesc = resolvedLeadTitle ? `"${resolvedLeadTitle}" (${resolvedLeadId})` : resolvedLeadId ?? cwd;
+      await paseo.agents
+        .ref(existing.id)
+        .send(`Lead ${leadDesc} needs a decision on: ${reason.trim()}
+
+Please review and surface this for Aub.
+
+${ROSTER_PROMPT_MARKER}`)
+        .catch(() => undefined);
+    }
+    return { ok: true, reused: true, message: `Opened ${existing.title ?? "brainstorm"}`, agentId: existing.id };
+  };
+
+  if (reuseExisting) {
+    const liveBrainstorms = liveAgents.filter((a) => isBrainstormAgent(a.title, a.labels ?? {}, cfg));
+    const target = {
+      labels: matchedLead?.labels,
+      workspaceId: workspaceId ?? (matchedLead as { workspaceId?: string } | undefined)?.workspaceId,
+      cwd,
+    };
+    // Pair against every live lead, so an unlabeled target can't take another lead's keyed brainstorm.
+    const otherLeads = liveAgents.filter(
+      (a) => a.id !== matchedLead?.id && isLeadAgent(a.title, a.labels ?? {}, cfg),
+    );
+    const targetId = matchedLead?.id ?? "__target__";
+    const pair = (t: typeof target) =>
+      brainstormForLead({ id: targetId, ...t }, [...otherLeads, { id: targetId, ...t }], liveBrainstorms, cfg);
+    const existing =
+      pair(target) ?? (rootNorm !== "" ? pair({ ...target, workspaceId: undefined, cwd: rootNorm }) : undefined);
+    if (existing) return reuse(existing);
+  }
+
   const resolvedArea =
     area?.trim() ||
     (matchedLead ? leadAreaFromTitle(matchedLead.title, matchedLead.cwd, cfg) : "") ||
@@ -226,6 +243,25 @@ export async function createBrainstorm(
   // The boot prompt lands as a user message that can post-date needs-aub-at; the marker keeps it from reading as Aub.
   const prompt = `${basePrompt}\n\n${ROSTER_PROMPT_MARKER}`;
 
+  // A brainstorm made moments ago may not be listed or titled yet; the same project reuses it.
+  const now = Date.now();
+  const recentKeys = [cwdNorm, rootNorm].filter(Boolean);
+  for (const [k, r] of recentCreates) if (now - r.at > RECENT_BRAINSTORM_MS) recentCreates.delete(k);
+  const recentHit = recentKeys.map((k) => recentCreates.get(k)).find((r) => r && r.slug === slug);
+  if (recentHit) {
+    const listedHit = allAgents.find((a) => a.id === recentHit.agentId);
+    const alive = listedHit ? !listedHit.archivedAt && listedHit.status !== "closed" : now - recentHit.at < UNLISTED_GRACE_MS;
+    if (alive) return reuse({ id: recentHit.agentId, title: listedHit?.title ?? recentHit.title });
+  }
+  // A live brainstorm already keyed to this project, even one the lead pairing skipped.
+  const keyed = liveAgents.find(
+    (a) =>
+      isBrainstormAgent(a.title, a.labels ?? {}, cfg) &&
+      a.labels?.[cfg.labels.lead]?.trim().toLowerCase() === slug &&
+      recentKeys.includes(normalizePath(a.cwd)),
+  );
+  if (keyed) return reuse(keyed);
+
   const handle = await paseo.agents.create({
     cwd,
     title,
@@ -233,6 +269,7 @@ export async function createBrainstorm(
     config,
     prompt,
   });
+  for (const k of recentKeys) recentCreates.set(k, { agentId: handle.id, slug, title, at: Date.now() });
   return {
     ok: true,
     reused: false,

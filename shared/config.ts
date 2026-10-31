@@ -164,6 +164,9 @@ function staleDays(value: string): number {
   return daysError(value) ? 3 : Number(value);
 }
 
+/** A "(old) …" title marks a retired agent whatever the settings say. */
+const RETIRED_TITLE = /^\s*\(old\)/i;
+
 /**
  * Whether an agent is an active lead: a lead `role` label, else a lead title.
  * Retired titles and retired roles never count.
@@ -174,7 +177,7 @@ export function isLeadAgent(
   cfg: BoardConfig,
 ): boolean {
   const text = title ?? "";
-  if (cfg.hideTitle?.test(text)) return false;
+  if (RETIRED_TITLE.test(text) || cfg.hideTitle?.test(text)) return false;
   const role = labels[cfg.labels.role];
   const known = [...cfg.leadRoles, ...cfg.oldLeadRoles, ...cfg.brainstormRoles];
   if (role !== undefined && known.includes(role)) return cfg.leadRoles.includes(role);
@@ -187,7 +190,7 @@ export function isBrainstormAgent(
   labels: Readonly<Record<string, string>>,
   cfg: BoardConfig,
 ): boolean {
-  if (isLeadAgent(title, labels, cfg) || cfg.hideTitle?.test(title ?? "")) return false;
+  if (isLeadAgent(title, labels, cfg) || RETIRED_TITLE.test(title ?? "") || cfg.hideTitle?.test(title ?? "")) return false;
   const role = labels[cfg.labels.role];
   if (role !== undefined && cfg.brainstormRoles.includes(role)) return true;
   if (role !== undefined && (cfg.leadRoles.includes(role) || cfg.oldLeadRoles.includes(role))) return false;

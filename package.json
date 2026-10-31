@@ -18,7 +18,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types scripts/test-needs-aub.ts && node --experimental-strip-types scripts/test-match.ts && node --experimental-strip-types scripts/test-check-in.ts && node --experimental-strip-types scripts/test-clear-hand.ts && node --experimental-strip-types scripts/test-groups.ts && node --experimental-strip-types scripts/test-profiles.ts && node --experimental-strip-types scripts/test-profiles-md.ts && node --experimental-strip-types --import ./scripts/resolve-ts.mjs scripts/test-sort-profiles.ts && node --experimental-strip-types --import ./scripts/resolve-ts.mjs scripts/test-profile-write.ts"
+    "test": "node --experimental-strip-types scripts/test-needs-aub.ts && node --experimental-strip-types scripts/test-match.ts && node --experimental-strip-types scripts/test-check-in.ts && node --experimental-strip-types scripts/test-clear-hand.ts && node --experimental-strip-types scripts/test-groups.ts && node --experimental-strip-types scripts/test-profiles.ts && node --experimental-strip-types scripts/test-profiles-md.ts && node --experimental-strip-types --import ./scripts/resolve-ts.mjs scripts/test-sort-profiles.ts && node --experimental-strip-types --import ./scripts/resolve-ts.mjs scripts/test-profile-write.ts && node --experimental-transform-types --import ./scripts/resolve-ts.mjs scripts/test-brainstorm-dedupe.ts"
   },
   "devDependencies": {
     "@getpaseo/plugin": "0.13.2",

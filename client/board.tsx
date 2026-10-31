@@ -598,6 +598,7 @@ export function AgentBoardScreen({ theme, layout, navigation }: PluginScreenProp
         leadTitle: displayTitle(missing.lead),
         area: missing.area,
         cwd: missing.lead.cwd,
+        reuseExisting: true,
         profile: profileId || cfg.brainstormProfile || undefined,
         modeId: cfg.brainstormModeId || "auto",
       });
