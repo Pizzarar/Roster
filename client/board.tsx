@@ -200,7 +200,7 @@ function AgentRow({
             >
               {displayTitle(agent)}
             </Text>
-            {kind === "lead" && isLeadAwaitingAub(agent, brainstorms, cfg) ? (
+            {kind === "lead" && isLeadAwaitingAub(agent) ? (
               <Chip theme={theme} label="🙋 waiting on you" tone="warning" />
             ) : null}
             {attention ? (

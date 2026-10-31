@@ -2,7 +2,7 @@ import {
   isLeadAgent,
   isLeadAwaitingAub,
   matchBrainstormForLead,
-  needsAubFlaggedMs,
+  needsAubStampMs,
   needsAubReasonText,
   normalizePath,
   PARENT_LABEL,
@@ -98,6 +98,17 @@ export function orphanBrainstorms(
   return brainstorms.filter((b) => !matchedIds.has(b.id));
 }
 
+/** Display/ordering time only (never used to decide whether a flag is answered). */
+function flagTimeMs(lead: BoardAgent): number {
+  const stamped = needsAubStampMs(lead.labels);
+  if (Number.isFinite(stamped)) return stamped;
+  for (const iso of [lead.updatedAt, lead.createdAt]) {
+    const ms = Date.parse(iso ?? "");
+    if (Number.isFinite(ms)) return ms;
+  }
+  return Number.NaN;
+}
+
 export interface RaisedHandItem {
   readonly lead: BoardAgent;
   readonly brainstorm: BoardAgent | undefined;
@@ -106,8 +117,8 @@ export interface RaisedHandItem {
 }
 
 /**
- * Flagged leads in FIFO order by flag time (`needs-aub-at`, fallback `updatedAt`).
- * Clears when Aub has sent a message in that project's brainstorm after `flaggedAt` (`lastUserMessageAt`).
+ * Flagged leads in FIFO order by flag time (`needs-aub-at`, fallback `updatedAt`, display only).
+ * A hand stays up until the NeedsAubWatcher clears the label after a human message in the brainstorm.
  */
 export function raisedHandsQueue(
   agents: readonly BoardAgent[],
@@ -118,8 +129,8 @@ export function raisedHandsQueue(
   const brainstorms = live.filter((a) => agentKind(a, cfg) === "brainstorm");
   const queue: { item: RaisedHandItem; ms: number }[] = [];
   for (const lead of leads) {
-    if (!isLeadAwaitingAub(lead, brainstorms, cfg)) continue;
-    const ms = needsAubFlaggedMs(lead);
+    if (!isLeadAwaitingAub(lead)) continue;
+    const ms = flagTimeMs(lead);
     queue.push({
       ms,
       item: {

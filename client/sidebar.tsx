@@ -54,7 +54,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
   }, [board.agents, cfg, linked]);
   const queue = useMemo(() => raisedHandsQueue([...board.agents.values()], cfg), [board.agents, cfg]);
   const waitingLeads = useMemo(
-    () => leads.filter((agent) => isLeadAwaitingAub(agent, brainstorms, cfg)).length,
+    () => leads.filter((agent) => isLeadAwaitingAub(agent)).length,
     [leads, brainstorms, cfg],
   );
   const orphans = useMemo(
@@ -150,7 +150,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
     });
 
   const row = (agent: BoardAgent, sectionId: string, extra?: ReactNode) => {
-    const waitingOnAub = agentKind(agent, cfg) === "lead" && isLeadAwaitingAub(agent, brainstorms, cfg);
+    const waitingOnAub = agentKind(agent, cfg) === "lead" && isLeadAwaitingAub(agent);
     const attention = attentionLabel(agent);
     const subagents = subagentLabel(board.subagents.get(agent.id));
     const trailing =

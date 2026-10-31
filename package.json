@@ -17,7 +17,8 @@
     "README.md"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types scripts/test-needs-aub.ts"
   },
   "devDependencies": {
     "@getpaseo/plugin": "0.13.2",

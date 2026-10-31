@@ -6,7 +6,8 @@ import {
   isBrainstormAgent,
   isLeadAgent,
   isWaitingOnAub,
-  aubRepliedSinceFlag,
+  aubMayHaveReplied,
+  aubReplied,
   matchBrainstormForLead,
   NEEDS_AUB_AT_LABEL,
   NEEDS_AUB_LABEL,
@@ -300,6 +301,17 @@ export async function checkInLeads(paseo: PaseoApi, cfg: BoardConfig) {
   };
 }
 
+async function routedBaselineMs(paseo: PaseoApi, brainstormId: string | undefined): Promise<number> {
+  let baseline = Date.now();
+  if (!brainstormId) return baseline;
+  const listed = await paseo.agents
+    .list({ includeBackground: true, filter: { includeBackground: true }, page: { limit: AGENT_PAGE_LIMIT } })
+    .catch(() => null);
+  const userMs = Date.parse(listed?.entries.find((e) => e.agent.id === brainstormId)?.agent.lastUserMessageAt ?? "");
+  if (Number.isFinite(userMs)) baseline = Math.max(baseline, userMs);
+  return baseline;
+}
+
 export class NeedsAubWatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
   private boundPaseo: PaseoApi | null = null;
@@ -349,9 +361,8 @@ export class NeedsAubWatcher {
       const reason = unhandledNeedsAubReason(lead.labels);
       if (reason && cfg.needsAubAutoSpawn && !this.inFlight.has(lead.id)) {
         this.inFlight.add(lead.id);
-        const flaggedAt = new Date().toISOString();
         try {
-          await createBrainstorm(
+          const routed = await createBrainstorm(
             {
               leadId: lead.id,
               leadTitle: lead.title ?? undefined,
@@ -364,6 +375,9 @@ export class NeedsAubWatcher {
             p,
             cfg,
           );
+          // Routing sends a prompt into the brainstorm, which bumps its lastUserMessageAt. Stamp after
+          // that, and no earlier than the brainstorm's own latest user message, so only a later message clears.
+          const flaggedAt = new Date(await routedBaselineMs(p, routed.agentId)).toISOString();
           await updateAgentLabels(lead.id, [
             `${NEEDS_AUB_LABEL}=handled`,
             `${NEEDS_AUB_REASON_LABEL}=${reason}`,
@@ -378,13 +392,21 @@ export class NeedsAubWatcher {
         }
       } else if (lead.labels?.[NEEDS_AUB_LABEL]?.toLowerCase() === "handled") {
         const brainstorm = matchBrainstormForLead(lead, brainstorms, cfg);
-        if (aubRepliedSinceFlag(lead, brainstorm)) {
-          // Empty values blank the stamp and reason so a later re-flag starts clean.
-          await updateAgentLabels(lead.id, [
-            `${NEEDS_AUB_LABEL}=cleared`,
-            `${NEEDS_AUB_AT_LABEL}=`,
-            `${NEEDS_AUB_REASON_LABEL}=`,
-          ]);
+        if (brainstorm && aubMayHaveReplied(lead.labels, brainstorm.lastUserMessageAt)) {
+          // lastUserMessageAt also counts agent-sent prompts; confirm a human-typed message in the timeline.
+          const tail = await p.agents
+            .ref(brainstorm.id)
+            .timeline.refetch({ direction: "tail", limit: 40 })
+            .then((page) => page.entries)
+            .catch(() => undefined);
+          if (aubReplied(lead.labels, brainstorm.lastUserMessageAt, tail)) {
+            // Only now are the stamp and reason blanked, so a later re-flag starts clean.
+            await updateAgentLabels(lead.id, [
+              `${NEEDS_AUB_LABEL}=cleared`,
+              `${NEEDS_AUB_AT_LABEL}=`,
+              `${NEEDS_AUB_REASON_LABEL}=`,
+            ]);
+          }
         }
       }
     }

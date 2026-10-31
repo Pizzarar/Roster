@@ -193,65 +193,7 @@ export function isBrainstormAgent(
   return cfg.brainstormTitle?.test(title ?? "") ?? false;
 }
 
-export const NEEDS_AUB_LABEL = "needs-aub";
-export const NEEDS_AUB_REASON_LABEL = "needs-aub-reason";
-export const NEEDS_AUB_AT_LABEL = "needs-aub-at";
-
-/** True when a lead has flagged needs-aub (including after auto-spawn sets needs-aub=handled). */
-export function isWaitingOnAub(labels: Readonly<Record<string, string>> | undefined): boolean {
-  const raw = labels?.[NEEDS_AUB_LABEL]?.trim();
-  if (!raw) return false;
-  return !/^(?:none|false|cleared|0)$/i.test(raw);
-}
-
-/** Non-null when needs-aub has a fresh reason that hasn't been marked handled yet. */
-export function unhandledNeedsAubReason(labels: Readonly<Record<string, string>> | undefined): string | null {
-  const raw = labels?.[NEEDS_AUB_LABEL]?.trim();
-  if (!raw) return null;
-  if (/^(?:handled|none|false|cleared|0)$/i.test(raw)) return null;
-  return raw;
-}
-
-export function needsAubReasonText(labels: Readonly<Record<string, string>> | undefined): string {
-  return (
-    unhandledNeedsAubReason(labels) ||
-    labels?.[NEEDS_AUB_REASON_LABEL]?.trim() ||
-    "Waiting on your decision"
-  );
-}
-
-export interface FlaggableLead {
-  readonly labels?: Readonly<Record<string, string>>;
-  readonly updatedAt?: string | null;
-  readonly createdAt?: string | null;
-}
-
-/**
- * When a lead flagged needs-aub, in ms (NaN if unknown). A live (unhandled) flag ignores any stored
- * `needs-aub-at`, which belongs to an earlier flag; otherwise a bad stamp falls back to updatedAt/createdAt.
- */
-export function needsAubFlaggedMs(lead: FlaggableLead): number {
-  const fallback = () => {
-    for (const iso of [lead.updatedAt, lead.createdAt]) {
-      const ms = Date.parse(iso ?? "");
-      if (Number.isFinite(ms)) return ms;
-    }
-    return Number.NaN;
-  };
-  if (unhandledNeedsAubReason(lead.labels)) return fallback();
-  const stamped = Date.parse(lead.labels?.[NEEDS_AUB_AT_LABEL]?.trim() ?? "");
-  return Number.isFinite(stamped) ? stamped : fallback();
-}
-
-/** True once Aub has messaged the lead's brainstorm after the lead flagged needs-aub. */
-export function aubRepliedSinceFlag(
-  lead: FlaggableLead,
-  brainstorm: { readonly lastUserMessageAt?: string | null } | undefined,
-): boolean {
-  const userMs = Date.parse(brainstorm?.lastUserMessageAt ?? "");
-  const flagMs = needsAubFlaggedMs(lead);
-  return Number.isFinite(userMs) && Number.isFinite(flagMs) && userMs > flagMs;
-}
+export * from "./needs-aub";
 
 export function compileConfig(values: RosterSettings): BoardConfig {
   const hasBrainstorm = values.brainstormPreset;
@@ -333,12 +275,5 @@ export function matchBrainstormForLead<T extends MatchableAgent>(
   return brainstorms.find((b) => normalizePath(b.cwd) === leadCwd && !namesOtherLead(b));
 }
 
-/** The lead is flagged needs-aub and Aub has not replied in its brainstorm since. Drives every 🙋 badge and the queue. */
-export function isLeadAwaitingAub<T extends MatchableAgent & { readonly lastUserMessageAt?: string | null }>(
-  lead: MatchableAgent & FlaggableLead,
-  brainstorms: readonly T[],
-  cfg: Pick<BoardConfig, "labels">,
-): boolean {
-  if (!isWaitingOnAub(lead.labels)) return false;
-  return !aubRepliedSinceFlag(lead, matchBrainstormForLead(lead, brainstorms, cfg));
-}
+/** Re-exported for call sites that already import from config. */
+export { isLeadAwaitingAub } from "./needs-aub";

@@ -102,7 +102,7 @@ function WorkspaceRowView({
   const { workspace, verdict } = row;
   const isMerged = workspace.merged || workspace.pr?.merged === true;
   const lead = row.agents.some((agent) => agentKind(agent, cfg) === "lead");
-  const waitingOnAub = row.agents.some((agent) => agentKind(agent, cfg) === "lead" && isLeadAwaitingAub(agent, brainstorms, cfg));
+  const waitingOnAub = row.agents.some((agent) => agentKind(agent, cfg) === "lead" && isLeadAwaitingAub(agent));
   const main = lead || workspace.kind !== "worktree";
   const activity = relativeTime(workspace.activityAt ?? workspace.createdAt, now);
   const meta =
@@ -195,7 +195,7 @@ export function WorkspacesScreen({ theme, layout, navigation }: PluginScreenProp
     () => {
       const live = [...board.agents.values()].filter((a) => !a.archivedAt && a.status !== "closed");
       const brainstorms = live.filter((a) => agentKind(a, cfg) === "brainstorm");
-      return live.filter((a) => agentKind(a, cfg) === "lead" && isLeadAwaitingAub(a, brainstorms, cfg));
+      return live.filter((a) => agentKind(a, cfg) === "lead" && isLeadAwaitingAub(a));
     },
     [board.agents, cfg],
   );
