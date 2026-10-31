@@ -39,7 +39,10 @@ export interface ExpectedHand {
 }
 
 export function handMatches(labels: Readonly<Record<string, string>> | undefined, expected: ExpectedHand): boolean {
-  return (labels?.[NEEDS_AUB_AT_LABEL]?.trim() ?? "") === expected.flagAt && needsAubReasonText(labels) === expected.reason;
+  if (!isWaitingOnAub(labels) || needsAubReasonText(labels) !== expected.reason) return false;
+  // An empty `flagAt` means the flag was still unhandled when shown; the watcher may have stamped an `at` since.
+  if (!expected.flagAt) return true;
+  return (labels?.[NEEDS_AUB_AT_LABEL]?.trim() ?? "") === expected.flagAt;
 }
 
 /** Stable marker Roster appends to every prompt it sends into a brainstorm, so those never read as Aub typing. */

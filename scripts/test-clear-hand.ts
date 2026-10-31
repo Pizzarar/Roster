@@ -58,6 +58,17 @@ const tests: [string, () => void][] = [
     assert.equal(handMatches(labels, { flagAt: "", reason: "Pick tick rate" }), true);
     assert.equal(handMatches({ ...labels, "needs-aub": "Other" }, { flagAt: "", reason: "Pick tick rate" }), false);
   }],
+  ["unhandled when shown, then routed with a new at, still matches", () => {
+    assert.equal(handMatches(handled, { flagAt: "", reason: "Pick tick rate" }), true);
+  }],
+  ["an already-cleared hand is refused", () => {
+    const cleared = { ...handled, ...clearHandLabels(NOW) };
+    assert.equal(handMatches(cleared, { flagAt: "", reason: "Pick tick rate" }), false);
+    assert.equal(handMatches({ "needs-aub": "cleared", "needs-aub-reason": "Pick tick rate" }, { flagAt: "", reason: "Pick tick rate" }), false);
+  }],
+  ["a changed reason is refused even with an empty flagAt", () => {
+    assert.equal(handMatches({ ...handled, "needs-aub-reason": "Other" }, { flagAt: "", reason: "Pick tick rate" }), false);
+  }],
   ["dedupe window", () => {
     assert.equal(isDuplicateClick(undefined, NOW), false);
     assert.equal(isDuplicateClick(NOW, NOW + CLEAR_HAND_DEDUPE_MS - 1), true);

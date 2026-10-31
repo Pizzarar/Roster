@@ -6,6 +6,7 @@ import { Pressable, Text, View } from "react-native";
 import { useLeadBrainstorm } from "./brainstorm-link";
 import { checkInLeadsRpc, clearHandRpc, snoozeHandRpc } from "../shared/brainstorm";
 import { CLEAR_HAND_DEDUPE_MS } from "../shared/clear-hand";
+import { unhandledNeedsAubReason } from "../shared/needs-aub";
 import { CHECK_IN_DEDUPE_MS, formatQuiet, leadHealth } from "../shared/check-in";
 import { useBoardConfig } from "./config";
 import {
@@ -123,7 +124,9 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
     const sent = kind === "clear" ? "cleared" : "snoozed";
     setHandSent((m) => new Map(m).set(lead.id, sent));
     try {
-      const expected = { leadId: lead.id, flagAt: lead.labels["needs-aub-at"]?.trim() ?? "", reason: item.reason };
+      // An unhandled flag may get a new `needs-aub-at` from the watcher before the click lands, so don't key on it.
+      const flagAt = unhandledNeedsAubReason(lead.labels) ? "" : (lead.labels["needs-aub-at"]?.trim() ?? "");
+      const expected = { leadId: lead.id, flagAt, reason: item.reason };
       const res = await (kind === "clear" ? clearRpc(expected) : snoozeRpc(expected));
       if (res.ok) setTimeout(unlock, CLEAR_HAND_DEDUPE_MS);
       else {
