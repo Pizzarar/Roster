@@ -13,8 +13,7 @@ import {
   type ProfileEdit,
   type ProfileLocation,
 } from "../shared/config";
-import { backupConfigRpc } from "../shared/profiles-backup";
-import { sortProfilesRpc } from "../shared/profile-sort";
+import { writeProfilesRpc } from "../shared/profile-write";
 import {
   applyPlan,
   diffProfiles,
@@ -57,8 +56,7 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
   const [base, setBase] = useState<ProfileEdit>({});
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
-  const backup = useRpc(backupConfigRpc);
-  const sortRpc = useRpc(sortProfilesRpc);
+  const write = useRpc(writeProfilesRpc);
   const [sortPreview, setSortPreview] = useState<{ before: string[]; after: string[]; groups: { label: string; names: string[] }[] } | null>(null);
   const [sorting, setSorting] = useState(false);
   const [sortChanged, setSortChanged] = useState(false);
@@ -80,25 +78,19 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
       setStatus("error");
     }
   }, [paseo]);
-  /** With "Keep Paseo's profile list sorted" on, re-sort after a write (or on open); the daemon skips if already sorted. */
-  const keepSorted = useCallback(async () => {
-    if (!cfg.keepProfilesSorted) return;
-    try {
-      const res = await sortRpc({});
-      if (res.changed) toast.show(res.message);
-      else if (!res.ok) toast.error(`Could not sort Paseo's profile list: ${res.message}`);
-    } catch (error) {
-      toast.error(`Could not sort Paseo's profile list: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, [cfg.keepProfilesSorted, sortRpc, toast]);
+  // Once per open: the daemon sorts only if its own copy of the keep-sorted setting is ON and the order is off.
   useEffect(() => {
     void (async () => {
-      await keepSorted();
+      try {
+        const res = await write({ kind: "sort", auto: true });
+        if (res.changed) toast.show(res.message);
+      } catch {
+        // Settings not ready or daemon busy: the next open tries again.
+      }
       await load();
     })();
-    // Runs on open and when the setting or group order changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load, cfg.keepProfilesSorted, cfg.groupOrder]);
+  }, [load]);
 
   const openSortPreview = async () => {
     try {
@@ -117,7 +109,7 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
   const applySort = async () => {
     setSorting(true);
     try {
-      const res = await sortRpc({});
+      const res = await write({ kind: "sort", auto: false });
       if (!res.ok) throw new Error(res.message);
       toast.show(res.message);
       setSortPreview(null);
@@ -148,26 +140,13 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
   const save = async (id: string) => {
     setSaving(true);
     try {
-      // Re-read first, and write only the fields the user changed, so edits made elsewhere since this screen
-      // loaded (to any field, including ones shown here) are not overwritten. The profile is matched by id.
-      const fresh = readProfiles<AgentProfile>((await paseo.config.get()).config);
-      if (!canWriteProfiles(fresh.location)) throw new Error("Profiles live under daemon.agentProfiles; edit them in Paseo settings.");
-      const next = applyProfileEdit(fresh.profiles, id, changedFields(base, draft));
-      if (next) {
-        const res = await paseo.config.patch({ agentProfiles: next as AgentProfile[] });
-        const saved = readProfiles<AgentProfile>(res.config);
-        setProfiles(saved.profiles);
-        setLocation(saved.location);
-        toast.show("Profile saved");
-      } else {
-        setProfiles(fresh.profiles);
-        toast.show("No changes");
-      }
+      // The daemon re-reads the config and applies only the fields the user changed (matched by id), so edits made
+      // elsewhere since this screen loaded are not overwritten; it also re-sorts when that setting is on.
+      const res = await write({ kind: "edit", id, fields: changedFields(base, draft) });
+      if (!res.ok) throw new Error(res.message);
+      toast.show(res.changed ? "Profile saved" : "No changes");
+      await load();
       setEditing(null);
-      if (next) {
-        await keepSorted();
-        await load();
-      }
     } catch (error) {
       toast.error(`Could not save: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -214,30 +193,15 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
     if (!plan || plan.errors.length > 0) return;
     setApplying(true);
     try {
-      const fresh = readProfiles<AgentProfile>((await paseo.config.get()).config);
-      if (!canWriteProfiles(fresh.location)) {
-        throw new Error("Profiles live under daemon.agentProfiles and cannot be written from here.");
-      }
-      const next = applyPlan(fresh.profiles as readonly Entry[], plan, deleteIds, () => makeProfileId(Date.now(), Math.random));
-      if (next) {
-        // Back up config.json first; a failed backup stops the write.
-        const saved = await backup({});
-        if (!saved.ok) throw new Error(saved.message);
-        const res = await paseo.config.patch({ agentProfiles: next as AgentProfile[] });
-        const read = readProfiles<AgentProfile>(res.config);
-        setProfiles(read.profiles);
-        setLocation(read.location);
-        toast.show(`Profiles updated. ${saved.message}`);
-      } else {
-        toast.show("No changes");
-      }
+      // One daemon-side write: re-parse and re-diff the paste against the fresh config, apply, sort if the setting is
+      // on, back up once, patch once.
+      const res = await write({ kind: "import", markdown: pasted, deleteIds: [...deleteIds] });
+      if (!res.ok) throw new Error(res.message);
+      toast.show(res.changed ? `Profiles updated. ${res.message}` : "No changes");
+      await load();
       setPlan(null);
       setPasted("");
       setBulk(null);
-      if (next) {
-        await keepSorted();
-        await load();
-      }
     } catch (error) {
       toast.error(`Could not apply: ${error instanceof Error ? error.message : String(error)}`);
     } finally {

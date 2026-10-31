@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { DEFAULT_GROUP_ORDER, parseGroupOrder, sameOrder, sortProfiles } from "../shared/groups.ts";
-import { readFileSync } from "node:fs";
+import { compileConfig, DEFAULT_SETTINGS } from "../shared/config.ts";
+import { rosterSettings } from "../shared/settings.ts";
 
 const order = parseGroupOrder(DEFAULT_GROUP_ORDER);
 const p = (id: string, name: string, extra: Record<string, unknown> = {}) => ({ id, name, provider: "x", ...extra });
@@ -64,11 +65,11 @@ const tests: [string, () => void][] = [
     const nameless = { id: "n" };
     assert.deepEqual(sortProfiles([nameless, p("l", "Lead - A")], order), [p("l", "Lead - A"), nameless]);
   }],
-  ["keepProfilesSorted defaults to true in the settings schema (so an install whose stored settings lack the key is ON)", () => {
-    // settings.ts needs the plugin runtime, which plain Node cannot load; check the schema line itself.
-    const source = readFileSync(new URL("../shared/settings.ts", import.meta.url), "utf8");
-    assert.match(source, /keepProfilesSorted:\s*z\.boolean\(\)\.default\(true\)/);
-    // Zod applies .default() to a missing key, which is how stored settings without it resolve.
+  ["keepProfilesSorted resolves to ON when stored settings lack the key", () => {
+    assert.equal(DEFAULT_SETTINGS.keepProfilesSorted, true);
+    assert.equal(rosterSettings.schema.parse({ groupOrder: "Lead" }).keepProfilesSorted, true);
+    assert.equal(compileConfig(rosterSettings.schema.parse({})).keepProfilesSorted, true);
+    assert.equal(compileConfig(rosterSettings.schema.parse({ keepProfilesSorted: false })).keepProfilesSorted, false);
   }],
 ];
 

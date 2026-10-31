@@ -1,8 +1,8 @@
-import { sortProfilesInConfig } from "./server/profile-sort";
-import { sortProfilesRpc } from "./shared/profile-sort";
-import { backupConfig } from "./server/profiles-backup";
-import { backupConfigRpc } from "./shared/profiles-backup";
+import { profileDeps, writeProfiles } from "./server/profile-write";
+import { writeProfilesRpc } from "./shared/profile-write";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
+
+type PaseoApi = Parameters<Parameters<PluginServerContext["handle"]>[1]>[1]["paseo"];
 import { AutoArchiver } from "./server/auto-archive";
 import { CheckIns } from "./server/check-in";
 import { aubHandAction, createBrainstorm, NeedsAubWatcher, renameBrainstorm } from "./server/brainstorm";
@@ -27,25 +27,45 @@ export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(rosterSettings);
   const handoffs = new Handoffs(settings);
   const stopSettings = handoffs.start();
-  // Re-sort Paseo's profile list when the group order or the keep-sorted switch changes (needs a bound daemon API).
-  let lastPaseo: Parameters<typeof sortProfilesInConfig>[0] | null = null;
-  let sortKey: string | null = null;
-  const sortKeyOf = (state: { status: string; values?: unknown }) => {
+  const profileSettings = async () => {
+    const state = await settings.read();
     if (state.status !== "ready") return null;
     const cfg = compileConfig(state.values as RosterSettings);
-    return { cfg, key: cfg.keepProfilesSorted ? cfg.groupOrder.join("\u001f") : "off" };
+    return { keepSorted: cfg.keepProfilesSorted, order: cfg.groupOrder };
+  };
+  // Re-sort Paseo's profile list when the group order or keep-sorted switch changes. The write needs a daemon API
+  // handle (any RPC or hook supplies one); until one is bound the re-sort stays pending and runs on the first bind.
+  let lastPaseo: PaseoApi | null = null;
+  let sortKey: string | null = null;
+  let sortPending = false;
+  const runPendingSort = () => {
+    if (!sortPending || !lastPaseo) return;
+    sortPending = false;
+    writeProfiles(profileDeps(lastPaseo, profileSettings), { kind: "sort", auto: true }).catch((error) => {
+      sortPending = true;
+      console.error(`profile sort failed: ${error}`);
+    });
+  };
+  const bindProfiles = (paseo: PaseoApi) => {
+    lastPaseo = paseo;
+    runPendingSort();
+  };
+  const keyOf = (state: { status: string; values?: unknown }) => {
+    if (state.status !== "ready") return null;
+    const cfg = compileConfig(state.values as RosterSettings);
+    return { cfg, key: cfg.keepProfilesSorted ? cfg.groupOrder.join("") : "off" };
   };
   void settings.read().then((state) => {
-    sortKey ??= sortKeyOf(state)?.key ?? null;
+    sortKey ??= keyOf(state)?.key ?? null;
   });
   const stopSortWatch = settings.subscribe((state) => {
-    const next = sortKeyOf(state);
+    const next = keyOf(state);
     if (!next) return;
-    const { cfg, key } = next;
-    const changed = sortKey !== null && key !== sortKey;
-    sortKey = key;
-    if (changed && cfg.keepProfilesSorted && lastPaseo) {
-      void sortProfilesInConfig(lastPaseo, cfg.groupOrder).catch((error) => console.error(`profile sort failed: ${error}`));
+    const changed = sortKey !== null && next.key !== sortKey;
+    sortKey = next.key;
+    if (changed && next.cfg.keepProfilesSorted) {
+      sortPending = true;
+      runPendingSort();
     }
   });
   const autoArchiver = new AutoArchiver(() => handoffs.config);
@@ -55,10 +75,9 @@ export default function contribute(server: PluginServerContext) {
   const stopNeedsAub = needsAubWatcher.start();
 
   server.handle(stopAgentRpc, stopAgent);
-  server.handle(backupConfigRpc, backupConfig);
-  server.handle(sortProfilesRpc, ({ dryRun }, { paseo }) => {
-    lastPaseo = paseo;
-    return sortProfilesInConfig(paseo, handoffs.config.groupOrder, dryRun);
+  server.handle(writeProfilesRpc, (op, { paseo }) => {
+    bindProfiles(paseo);
+    return writeProfiles(profileDeps(paseo, profileSettings), op);
   });
   server.handle(checkInLeadsRpc, ({ leadId }, { paseo }) => checkIns.run(paseo, leadId));
   server.handle(clearHandRpc, ({ leadId, flagAt, reason }, { paseo }) =>
@@ -68,7 +87,7 @@ export default function contribute(server: PluginServerContext) {
     aubHandAction("snooze", leadId, { flagAt, reason }, paseo),
   );
   server.handle(autoArchiveStateRpc, (_input, { paseo }) => {
-    lastPaseo = paseo;
+    bindProfiles(paseo);
     autoArchiver.bind(paseo);
     return autoArchiver.snapshot();
   });
@@ -78,6 +97,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(renameBrainstormRpc, renameBrainstorm);
   server.handle(createBrainstormRpc, (input, { paseo }) => createBrainstorm(input, paseo, handoffs.config));
   server.handle(handoffStateRpc, (_input, { paseo }) => {
+    bindProfiles(paseo);
     autoArchiver.bind(paseo);
     return handoffs.snapshot();
   });
@@ -116,14 +136,14 @@ export default function contribute(server: PluginServerContext) {
   });
 
   server.on("agent.created", ({ agent }, { paseo }) => {
-    lastPaseo = paseo;
+    bindProfiles(paseo);
     autoArchiver.bind(paseo);
     needsAubWatcher.bind(paseo);
     void needsAubWatcher.checkNow(paseo);
     return handoffs.onCreated(agent, paseo);
   });
   server.on("agent.turn_started", ({ agent }, { paseo }) => {
-    lastPaseo = paseo;
+    bindProfiles(paseo);
     autoArchiver.bind(paseo);
     needsAubWatcher.bind(paseo);
     return handoffs.onTurnStarted(agent, paseo);
@@ -133,12 +153,14 @@ export default function contribute(server: PluginServerContext) {
     return handoffs.onArchived(agent);
   });
   server.on("agent.turn_ended", ({ agent, outcome }, { paseo }) => {
+    bindProfiles(paseo);
     void checkIns.onTurnEnded(agent, outcome, paseo);
     needsAubWatcher.bind(paseo);
     void needsAubWatcher.checkNow(paseo);
     return handoffs.relayTurnEnded(agent, outcome, paseo).catch((error) => console.error(`relay failed: ${error}`));
   });
   server.on("agent.permission_requested", ({ agent, request }, { paseo }) => {
+    bindProfiles(paseo);
     needsAubWatcher.bind(paseo);
     void needsAubWatcher.checkNow(paseo);
     return handoffs
