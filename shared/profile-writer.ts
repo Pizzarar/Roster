@@ -1,11 +1,17 @@
 // Pure orchestration for profile writes; the daemon API, backup and settings are injected so tests can fake them.
 import { sameOrder, sortProfiles } from "./groups";
 import { applyProfileEdit, canWriteProfiles, readProfiles, type ProfileEntry, type ProfileEdit } from "./profiles";
-import { applyPlan, diffProfiles, makeProfileId, parseProfiles, type Entry } from "./profiles-md";
+import { applyPlan, makeProfileId, sameValue, type Entry, type ImportPlan } from "./profiles-md";
+
+/** A previewed import plan as it crosses the RPC: `from`/`to` are absent when undefined. */
+export interface WirePlan {
+  readonly changes: readonly { id: string; name: string; fields: readonly { key: string; from?: unknown; to?: unknown }[] }[];
+  readonly created: readonly Entry[];
+}
 
 export type WriteOp =
   | { kind: "edit"; id: string; fields: ProfileEdit }
-  | { kind: "import"; markdown: string; deleteIds: readonly string[] }
+  | { kind: "import"; plan: WirePlan; deleteIds: readonly string[] }
   | { kind: "sort"; auto: boolean };
 
 export interface WriteDeps {
@@ -24,6 +30,26 @@ export interface WriteResult {
   message: string;
 }
 
+export const STALE_PLAN = "Profiles changed since Preview; click Preview again.";
+
+/** Null when the previewed plan still describes the fresh config; otherwise the reason to refuse. */
+export function stalePlan(fresh: readonly ProfileEntry[], plan: WirePlan, deleteIds: readonly string[]): string | null {
+  const byId = new Map(fresh.map((p) => [p.id, p]));
+  for (const id of deleteIds) if (!byId.has(id)) return STALE_PLAN;
+  for (const change of plan.changes) {
+    const target = byId.get(change.id);
+    if (!target) return STALE_PLAN;
+    // The old value Preview showed must still be what is stored; other fields may have changed freely.
+    for (const field of change.fields) if (!sameValue((target as Entry)[field.key], field.from)) return STALE_PLAN;
+  }
+  const names = new Set(fresh.map((p) => (p as Entry).name));
+  for (const entry of plan.created) {
+    if (names.has(entry.name)) return STALE_PLAN;
+    if (typeof entry.id === "string" && byId.has(entry.id)) return STALE_PLAN;
+  }
+  return null;
+}
+
 const fail = (message: string): WriteResult => ({ ok: false, changed: false, message });
 
 async function run(deps: WriteDeps, op: WriteOp): Promise<WriteResult> {
@@ -37,10 +63,9 @@ async function run(deps: WriteDeps, op: WriteOp): Promise<WriteResult> {
   if (op.kind === "edit") {
     next = applyProfileEdit(fresh.profiles, op.id, op.fields) ?? fresh.profiles;
   } else if (op.kind === "import") {
-    const parsed = parseProfiles(op.markdown);
-    if (parsed.errors.length > 0) return fail(parsed.errors[0]!);
-    const plan = diffProfiles(fresh.profiles as readonly Entry[], parsed.profiles);
-    if (plan.errors.length > 0) return fail(plan.errors[0]!);
+    const stale = stalePlan(fresh.profiles, op.plan, op.deleteIds);
+    if (stale) return fail(stale);
+    const plan = { changes: op.plan.changes, created: op.plan.created, missing: [], errors: [] } as unknown as ImportPlan;
     const makeId = deps.makeId ?? (() => makeProfileId(Date.now(), Math.random));
     const applied = applyPlan(fresh.profiles as readonly Entry[], plan, new Set(op.deleteIds), makeId);
     next = (applied as ProfileEntry[] | null) ?? fresh.profiles;

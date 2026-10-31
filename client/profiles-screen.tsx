@@ -193,9 +193,9 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
     if (!plan || plan.errors.length > 0) return;
     setApplying(true);
     try {
-      // One daemon-side write: re-parse and re-diff the paste against the fresh config, apply, sort if the setting is
-      // on, back up once, patch once.
-      const res = await write({ kind: "import", markdown: pasted, deleteIds: [...deleteIds] });
+      // One daemon-side write of exactly the previewed plan (refused if the profiles changed since Preview), sorted
+      // if the setting is on, one backup, one patch.
+      const res = await write({ kind: "import", plan: { changes: plan.changes, created: plan.created }, deleteIds: [...deleteIds] });
       if (!res.ok) throw new Error(res.message);
       toast.show(res.changed ? `Profiles updated. ${res.message}` : "No changes");
       await load();

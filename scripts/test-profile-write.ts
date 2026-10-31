@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { createProfileWriter, type WriteDeps } from "../shared/profile-writer.ts";
+import { createProfileWriter, STALE_PLAN, type WriteDeps } from "../shared/profile-writer.ts";
+import { diffProfiles, parseProfiles } from "../shared/profiles-md.ts";
+import { createPendingSort } from "../shared/pending-sort.ts";
 import { parseGroupOrder, DEFAULT_GROUP_ORDER } from "../shared/groups.ts";
 
 const order = parseGroupOrder(DEFAULT_GROUP_ORDER);
@@ -27,6 +29,14 @@ function fake(initial: ReturnType<typeof p>[], keepSorted: boolean, delay = 0) {
   };
   return { state, deps };
 }
+/** What the client sends: the plan Preview computed from `current`, as it looks after crossing JSON. */
+function previewed(current: ReturnType<typeof p>[], markdown: string) {
+  const parsed = parseProfiles(markdown);
+  assert.deepEqual(parsed.errors, []);
+  const plan = diffProfiles(current, parsed.profiles);
+  assert.deepEqual(plan.errors, []);
+  return JSON.parse(JSON.stringify({ changes: plan.changes, created: plan.created }));
+}
 const names = (l: { name: string }[]) => l.map((e) => e.name);
 const base = () => [p("1", "Review - A"), p("2", "Lead - B"), p("3", "Implement - C")];
 
@@ -47,19 +57,63 @@ const tests: [string, () => Promise<void>][] = [
   }],
   ["import adding a profile lands sorted in one write", async () => {
     const { state, deps } = fake(base(), true);
-    const md = "### Lead - New\nprovider: claude\n";
-    const res = await createProfileWriter()(deps, { kind: "import", markdown: md, deleteIds: [] });
+    const plan = previewed(base(), ["### Lead - New", "provider: claude", ""].join("\n"));
+    const res = await createProfileWriter()(deps, { kind: "import", plan, deleteIds: [] });
     assert.ok(res.ok && res.changed, res.message);
     assert.equal(state.patches, 1);
     assert.deepEqual(state.backups, ["import"]);
     assert.deepEqual(names(state.profiles), ["Lead - B", "Lead - New", "Implement - C", "Review - A"]);
   }],
-  ["import with errors writes nothing", async () => {
-    const { state, deps } = fake(base(), true);
-    const res = await createProfileWriter()(deps, { kind: "import", markdown: "not a profile", deleteIds: [] });
-    assert.equal(res.ok, false);
-    assert.equal(state.patches, 0);
-    assert.equal(state.backups.length, 0);
+  ["import refuses and writes nothing when a planned profile was deleted since Preview", async () => {
+    const plan = previewed(base(), "### Review - A\nid: 1\nprovider: claude\nmodel: m2\n");
+    const { state, deps } = fake(base().filter((e) => e.id !== "1"), true);
+    const res = await createProfileWriter()(deps, { kind: "import", plan, deleteIds: [] });
+    assert.deepEqual([res.ok, res.message], [false, STALE_PLAN]);
+    assert.equal(state.patches + state.backups.length, 0);
+  }],
+  ["import refuses when a ticked deletion is already gone", async () => {
+    const { state, deps } = fake(base().filter((e) => e.id !== "3"), true);
+    const res = await createProfileWriter()(deps, { kind: "import", plan: { changes: [], created: [] }, deleteIds: ["3"] });
+    assert.deepEqual([res.ok, res.message], [false, STALE_PLAN]);
+    assert.equal(state.patches + state.backups.length, 0);
+  }],
+  ["import refuses when a created name now exists", async () => {
+    const plan = previewed(base(), "### Brainstorm - New\nprovider: claude\n");
+    const { state, deps } = fake([...base(), p("9", "Brainstorm - New")], true);
+    const res = await createProfileWriter()(deps, { kind: "import", plan, deleteIds: [] });
+    assert.deepEqual([res.ok, res.message], [false, STALE_PLAN]);
+    assert.equal(state.patches + state.backups.length, 0);
+  }],
+  ["import refuses when a planned field's old value changed since Preview", async () => {
+    const before = [p("1", "Review - A", { model: "old" }), p("2", "Lead - B")];
+    const plan = previewed(before, "### Review - A\nid: 1\nprovider: claude\nmodel: new\n");
+    const { state, deps } = fake([p("1", "Review - A", { model: "changed-elsewhere" }), p("2", "Lead - B")], true);
+    const res = await createProfileWriter()(deps, { kind: "import", plan, deleteIds: [] });
+    assert.deepEqual([res.ok, res.message], [false, STALE_PLAN]);
+    assert.equal(state.patches + state.backups.length, 0);
+  }],
+  ["import writes only planned fields: a field changed elsewhere meanwhile survives", async () => {
+    const before = [p("1", "Review - A", { model: "old", notes: "n0" }), p("2", "Lead - B")];
+    const plan = previewed(before, "### Review - A\nid: 1\nprovider: claude\nmodel: new\n");
+    const { state, deps } = fake([p("1", "Review - A", { model: "old", notes: "edited-elsewhere", color: "red" }), p("2", "Lead - B")], false);
+    const res = await createProfileWriter()(deps, { kind: "import", plan, deleteIds: [] });
+    assert.ok(res.ok && res.changed, res.message);
+    const one = state.profiles.find((e) => e.id === "1") as Record<string, unknown>;
+    assert.equal(one.model, "new");
+    assert.equal(one.notes, "edited-elsewhere");
+    assert.equal(one.color, "red");
+  }],
+  ["a planned field removal (to absent after JSON) removes the field", async () => {
+    const before = [p("1", "Review - A", { model: "old" })];
+    const plan = previewed(before, "### Review - A\nid: 1\nprovider: claude\nmodel:\n");
+    const { state, deps } = fake(before, false);
+    await createProfileWriter()(deps, { kind: "import", plan, deleteIds: [] });
+    assert.equal("model" in state.profiles[0]!, false);
+  }],
+  ["ticked deletions are applied", async () => {
+    const { state, deps } = fake(base(), false);
+    await createProfileWriter()(deps, { kind: "import", plan: { changes: [], created: [] }, deleteIds: ["3"] });
+    assert.deepEqual(names(state.profiles), ["Review - A", "Lead - B"]);
   }],
   ["two queued ops apply in order and neither is lost", async () => {
     const { state, deps } = fake(base(), true, 5);
@@ -115,6 +169,40 @@ const tests: [string, () => Promise<void>][] = [
     await createProfileWriter()(deps, { kind: "sort", auto: false });
     const key = (e: unknown) => JSON.stringify(e);
     assert.deepEqual(state.profiles.map(key).sort(), weird.map(key).sort());
+  }],
+  ["pending sort: waits for a handle, then runs once", async () => {
+    const calls: string[] = [];
+    const sorter = createPendingSort<string>(async (h) => (calls.push(h), { ok: true }), () => {});
+    sorter.request();
+    assert.deepEqual(calls, []);
+    assert.equal(sorter.pending, true);
+    sorter.bind("a");
+    await Promise.resolve();
+    assert.deepEqual(calls, ["a"]);
+    sorter.bind("b");
+    assert.deepEqual(calls, ["a"]);
+  }],
+  ["pending sort: ok:false and rejection stay pending; a deliberate no-op (ok:true) does not", async () => {
+    const results: ({ ok: boolean } | Error)[] = [{ ok: false }, new Error("boom"), { ok: true }];
+    let n = 0;
+    const errors: unknown[] = [];
+    const sorter = createPendingSort<string>(async () => {
+      const r = results[n++]!;
+      if (r instanceof Error) throw r;
+      return r;
+    }, (e) => errors.push(e));
+    sorter.bind("h");
+    sorter.request();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(sorter.pending, true);
+    sorter.bind("h");
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(sorter.pending, true);
+    assert.equal(errors.length, 1);
+    sorter.bind("h");
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(sorter.pending, false);
+    assert.equal(n, 3);
   }],
 ];
 

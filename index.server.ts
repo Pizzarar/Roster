@@ -1,3 +1,4 @@
+import { createPendingSort } from "./shared/pending-sort";
 import { profileDeps, writeProfiles } from "./server/profile-write";
 import { writeProfilesRpc } from "./shared/profile-write";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
@@ -35,21 +36,12 @@ export default function contribute(server: PluginServerContext) {
   };
   // Re-sort Paseo's profile list when the group order or keep-sorted switch changes. The write needs a daemon API
   // handle (any RPC or hook supplies one); until one is bound the re-sort stays pending and runs on the first bind.
-  let lastPaseo: PaseoApi | null = null;
   let sortKey: string | null = null;
-  let sortPending = false;
-  const runPendingSort = () => {
-    if (!sortPending || !lastPaseo) return;
-    sortPending = false;
-    writeProfiles(profileDeps(lastPaseo, profileSettings), { kind: "sort", auto: true }).catch((error) => {
-      sortPending = true;
-      console.error(`profile sort failed: ${error}`);
-    });
-  };
-  const bindProfiles = (paseo: PaseoApi) => {
-    lastPaseo = paseo;
-    runPendingSort();
-  };
+  const pendingSort = createPendingSort<PaseoApi>(
+    (paseo) => writeProfiles(profileDeps(paseo, profileSettings), { kind: "sort", auto: true }),
+    (error) => console.error(`profile sort failed: ${error}`),
+  );
+  const bindProfiles = (paseo: PaseoApi) => pendingSort.bind(paseo);
   const keyOf = (state: { status: string; values?: unknown }) => {
     if (state.status !== "ready") return null;
     const cfg = compileConfig(state.values as RosterSettings);
@@ -64,8 +56,7 @@ export default function contribute(server: PluginServerContext) {
     const changed = sortKey !== null && next.key !== sortKey;
     sortKey = next.key;
     if (changed && next.cfg.keepProfilesSorted) {
-      sortPending = true;
-      runPendingSort();
+      pendingSort.request();
     }
   });
   const autoArchiver = new AutoArchiver(() => handoffs.config);

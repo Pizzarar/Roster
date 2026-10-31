@@ -16,8 +16,24 @@ export const profileWriteOp = z.discriminatedUnion("kind", [
       notes: z.string().optional(),
     }),
   }),
-  /** The pasted markdown is re-parsed and re-diffed against the fresh config; `deleteIds` are the ticked deletions. */
-  z.object({ kind: z.literal("import"), markdown: z.string(), deleteIds: z.array(z.string()).default([]) }),
+  /**
+   * The plan the user previewed (planned field changes with the old values shown, created entries) plus the ticked
+   * deletions. A missing `from`/`to` means undefined (JSON drops it): `to` missing removes the field.
+   */
+  z.object({
+    kind: z.literal("import"),
+    plan: z.object({
+      changes: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          fields: z.array(z.object({ key: z.string(), from: z.unknown().optional(), to: z.unknown().optional() })),
+        }),
+      ),
+      created: z.array(z.record(z.string(), z.unknown())),
+    }),
+    deleteIds: z.array(z.string()).default([]),
+  }),
   /** `auto` sorts only when the keep-sorted setting is on; the manual button omits it. */
   z.object({ kind: z.literal("sort"), auto: z.boolean().default(false) }),
 ]);
