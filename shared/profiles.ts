@@ -61,3 +61,13 @@ export function applyProfileEdit<T extends ProfileEntry>(
 export function canWriteProfiles(location: ProfileLocation): boolean {
   return location === "top";
 }
+
+/** The fields of `draft` that differ from `base` (the values shown when editing began): the user's actual edits. */
+export function changedFields(base: ProfileEdit, draft: ProfileEdit): ProfileEdit {
+  const out: Record<string, string> = {};
+  for (const field of EDITABLE_PROFILE_FIELDS) {
+    const value = draft[field];
+    if (value !== undefined && value.trim() !== (base[field] ?? "").trim()) out[field] = value;
+  }
+  return out;
+}

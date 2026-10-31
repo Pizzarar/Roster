@@ -30,7 +30,7 @@ export function groupKey(label: string): string {
 
 export interface Grouped<T> {
   readonly key: string;
-  /** First-seen casing. */
+  /** The configured name if listed in the group order, else the first-seen casing. */
   readonly label: string;
   readonly items: T[];
 }
@@ -57,9 +57,12 @@ export function groupByLabel<T>(
   order: readonly string[],
 ): Grouped<T>[] {
   const buckets = new Map<string, Grouped<T>>();
+  // A configured group shows with its configured casing; unlisted prefixes keep the first-seen casing.
+  const configured = new Map(order.map((entry) => [groupKey(entry), entry.trim()]));
   for (const item of items) {
-    const label = labelOf(item)?.trim() || OTHER_GROUP;
-    const key = groupKey(label);
+    const seen = labelOf(item)?.trim() || OTHER_GROUP;
+    const key = groupKey(seen);
+    const label = configured.get(key) ?? seen;
     const bucket = buckets.get(key);
     if (bucket) bucket.items.push(item);
     else buckets.set(key, { key, label, items: [item] });

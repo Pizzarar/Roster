@@ -18,11 +18,16 @@ const tests: [string, () => void][] = [
     assert.equal(namePrefix(null), null);
     assert.deepEqual(labels(["Gemini"]), ["Other"]);
   }],
-  ["groups are case-insensitive and keep first-seen casing", () => {
-    const g = groupByPrefix(["review - a", "Review - b", "REVIEW – c"], (n) => n, order);
+  ["groups are case-insensitive; unlisted prefixes keep first-seen casing", () => {
+    const g = groupByPrefix(["zeta - a", "Zeta - b", "ZETA – c"], (n) => n, order);
     assert.equal(g.length, 1);
-    assert.equal(g[0]!.label, "review");
+    assert.equal(g[0]!.label, "zeta");
     assert.equal(g[0]!.items.length, 3);
+  }],
+  ["listed groups use the configured casing, whatever the input casing", () => {
+    const g = groupByPrefix(["review - a", "REVIEW – b", "pre-CHECK - c", "work order - d"], (n) => n, order);
+    assert.deepEqual(g.map((x) => x.label), ["Work Order", "Review", "Pre-check"]);
+    assert.equal(g[1]!.items.length, 2);
   }],
   ["order: configured first, then alphabetical, Other last", () => {
     assert.deepEqual(
@@ -32,7 +37,7 @@ const tests: [string, () => void][] = [
   }],
   ["order: a custom list changes ranking", () => {
     const g = groupByPrefix(["Lead - 1", "Art - 1"], (n) => n, ["art", "LEAD"]);
-    assert.deepEqual(g.map((x) => x.label), ["Art", "Lead"]);
+    assert.deepEqual(g.map((x) => x.label), ["art", "LEAD"]);
   }],
   ["parseGroupOrder trims and drops blanks", () => {
     assert.deepEqual(parseGroupOrder(" a, ,b ,"), ["a", "b"]);

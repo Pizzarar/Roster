@@ -391,7 +391,13 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
                     ))
                   : null}
                 {open && group.items.length > ROLE_GROUP_ROWS ? (
-                  <Text style={styles.empty}>{group.items.length - ROLE_GROUP_ROWS} more on the Roster screen</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${group.items.length - ROLE_GROUP_ROWS} more, open Workspaces`}
+                    onPress={() => openScreen({ screenId: WORKSPACES_SCREEN })}
+                  >
+                    <Text style={styles.empty}>{group.items.length - ROLE_GROUP_ROWS} more on the Workspaces screen</Text>
+                  </Pressable>
                 ) : null}
               </View>
             );

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import {
   applyProfileEdit,
+  changedFields,
   canWriteProfiles,
   groupByPrefix,
   readProfiles,
@@ -39,6 +40,8 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<ProfileEdit>({});
+  /** Field values when editing began; only fields that differ from these are written. */
+  const [base, setBase] = useState<ProfileEdit>({});
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -68,16 +71,19 @@ export function ProfilesScreen({ theme, layout }: PluginScreenProps) {
 
   const startEdit = (profile: AgentProfile) => {
     setEditing(profile.id);
-    setDraft(Object.fromEntries(FIELDS.map(({ key }) => [key, textOf(profile, key)])));
+    const values = Object.fromEntries(FIELDS.map(({ key }) => [key, textOf(profile, key)]));
+    setBase(values);
+    setDraft(values);
   };
 
   const save = async (id: string) => {
     setSaving(true);
     try {
-      // Re-read first so a change made elsewhere since this screen loaded is not overwritten.
+      // Re-read first, and write only the fields the user changed, so edits made elsewhere since this screen
+      // loaded (to any field, including ones shown here) are not overwritten. The profile is matched by id.
       const fresh = readProfiles<AgentProfile>((await paseo.config.get()).config);
       if (!canWriteProfiles(fresh.location)) throw new Error("Profiles live under daemon.agentProfiles; edit them in Paseo settings.");
-      const next = applyProfileEdit(fresh.profiles, id, draft);
+      const next = applyProfileEdit(fresh.profiles, id, changedFields(base, draft));
       if (next) {
         const res = await paseo.config.patch({ agentProfiles: next as AgentProfile[] });
         const saved = readProfiles<AgentProfile>(res.config);

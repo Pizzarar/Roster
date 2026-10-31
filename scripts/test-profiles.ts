@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { applyProfileEdit, canWriteProfiles, readProfiles } from "../shared/profiles.ts";
+import { applyProfileEdit, canWriteProfiles, changedFields, readProfiles } from "../shared/profiles.ts";
 
 const a = { id: "a", name: "Review - Gemini", provider: "gemini", model: "m1", modeId: "x", color: "red", featureValues: { k: 1 }, future: { deep: true } };
 const b = { id: "b", name: "Lead - Opus", provider: "claude", extra: [1, 2] };
@@ -30,6 +30,21 @@ const tests: [string, () => void][] = [
     const out = applyProfileEdit([a], "a", { modeId: "  " })!;
     assert.equal("modeId" in out[0]!, false);
     assert.equal(out[0]!.provider, "gemini");
+  }],
+  ["changedFields keeps only what the user touched", () => {
+    const base = { model: "m1", modeId: "x", thinkingOptionId: "", notes: "old" };
+    assert.deepEqual(changedFields(base, { ...base, model: "m2" }), { model: "m2" });
+    assert.deepEqual(changedFields(base, base), {});
+    assert.deepEqual(changedFields(base, { ...base, notes: "" }), { notes: "" });
+  }],
+  ["an external edit to an untouched field survives a save (matched by id)", () => {
+    const base = { model: "m1", modeId: "x", thinkingOptionId: "", notes: "old" };
+    const draft = { ...base, model: "m2" };
+    const fresh = [{ ...a, notes: "changed in Paseo settings" }, { ...b, name: "a" }];
+    const out = applyProfileEdit(fresh, "a", changedFields(base, draft))!;
+    assert.equal(out[0]!.model, "m2");
+    assert.equal(out[0]!.notes, "changed in Paseo settings");
+    assert.equal(out[1], fresh[1]);
   }],
   ["nesting is detected: top is writable, daemon is not", () => {
     assert.deepEqual(readProfiles({ agentProfiles: [a] }), { profiles: [a], location: "top" });
