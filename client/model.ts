@@ -93,36 +93,93 @@ function flagTimeMs(lead: BoardAgent): number {
   return Number.NaN;
 }
 
+export const LANE_LABEL = "lane";
+export const TEAM_LABEL = "team";
+export const TOPIC_LABEL = "topic";
+
+/** Brainstorms idle longer than this (when not running) are hidden behind a "+N idle" toggle. */
+export const STALE_BRAINSTORM_MS = 6 * 60 * 60 * 1000;
+
 /** One sidebar row: a project's brainstorm (where Aub talks) paired with its lead (the secondary chip). */
 export interface ProjectLane {
   readonly key: string;
   readonly title: string;
   readonly lead: BoardAgent | undefined;
   readonly brainstorm: BoardAgent | undefined;
+  /** Count of brainstorms hidden because they have been idle longer than STALE_BRAINSTORM_MS. */
+  readonly idleCount: number;
 }
 
-/** "BRAINSTORM · MAIN GAME" -> "MAIN GAME". */
+/** "BRAINSTORM · MAIN GAME" -> "MAIN GAME". Uses `topic` label when present. */
 export function brainstormArea(brainstorm: BoardAgent): string {
+  const topic = brainstorm.labels[TOPIC_LABEL];
+  if (topic) return topic;
   const stripped = displayTitle(brainstorm).replace(/^BRAINSTORM\s*[·:-]?\s*/i, "").trim();
   return stripped || basename(brainstorm.cwd);
 }
 
-/** Leads paired with their brainstorm via matchBrainstormForLead, then brainstorms that have no lead. */
+/** The lane key used for grouping: `lane` label → `team` label → cwd basename. */
+export function agentLaneKey(agent: BoardAgent): string {
+  return agent.labels[LANE_LABEL] || agent.labels[TEAM_LABEL] || basename(agent.cwd).toLowerCase();
+}
+
+/** Latest activity timestamp (ms) for staleness checks. */
+function brainstormActivityMs(agent: BoardAgent): number {
+  return [agent.lastUserMessageAt, agent.updatedAt, agent.createdAt]
+    .map((t) => (t ? Date.parse(t) : NaN))
+    .filter(Number.isFinite)
+    .reduce((max, t) => Math.max(max, t), 0);
+}
+
+function isStaleBrainstorm(agent: BoardAgent, nowMs: number): boolean {
+  if (agent.status === "running") return false;
+  return nowMs - brainstormActivityMs(agent) > STALE_BRAINSTORM_MS;
+}
+
+/**
+ * One row per `lane` label (fallback `team`, then cwd basename). Lead = the agent with
+ * `role=lead` in that lane; brainstorm = the primary active buddy. Brainstorms that share a
+ * lane/team/cwd with a lead are NEVER promoted to a standalone "no lead" row.
+ * Brainstorms idle longer than STALE_BRAINSTORM_MS are folded into `idleCount`.
+ */
 export function projectLanes(
-  leads: readonly BoardAgent[],
-  brainstorms: readonly BoardAgent[],
+  agents: readonly BoardAgent[],
   cfg: BoardConfig,
+  nowMs = Date.now(),
 ): ProjectLane[] {
-  const { pairs, unpaired } = pairLeadsWithBrainstorms(leads, brainstorms, cfg);
-  const lanes: ProjectLane[] = leads.map((lead) => ({
-    key: lead.id,
-    title: leadArea(lead, cfg),
-    lead,
-    brainstorm: pairs.get(lead.id),
-  }));
-  for (const brainstorm of unpaired) {
-    lanes.push({ key: brainstorm.id, title: brainstormArea(brainstorm), lead: undefined, brainstorm });
+  const laneMap = new Map<string, BoardAgent[]>();
+  for (const agent of agents) {
+    const key = agentLaneKey(agent);
+    const bucket = laneMap.get(key);
+    if (bucket) bucket.push(agent);
+    else laneMap.set(key, [agent]);
   }
+
+  const lanes: ProjectLane[] = [];
+  for (const [key, members] of laneMap) {
+    const lead = members.find((a) => agentKind(a, cfg) === "lead");
+    const allBrainstorms = members.filter((a) => agentKind(a, cfg) === "brainstorm");
+    const activeBrainstorms = allBrainstorms.filter((b) => !isStaleBrainstorm(b, nowMs));
+    const idleCount = allBrainstorms.length - activeBrainstorms.length;
+
+    // Primary brainstorm: prefer one without a topic label (lane-level buddy), else freshest.
+    activeBrainstorms.sort((a, b) => brainstormActivityMs(b) - brainstormActivityMs(a));
+    const brainstorm = activeBrainstorms.find((b) => !b.labels[TOPIC_LABEL]) ?? activeBrainstorms[0];
+
+    if (!lead && !brainstorm && idleCount === 0) continue;
+
+    const title = lead
+      ? leadArea(lead, cfg)
+      : (brainstorm ? brainstormArea(brainstorm) : key);
+
+    lanes.push({ key, title, lead, brainstorm, idleCount });
+  }
+
+  lanes.sort((a, b) => {
+    if (a.lead && !b.lead) return -1;
+    if (!a.lead && b.lead) return 1;
+    return a.title.localeCompare(b.title);
+  });
   return lanes;
 }
 
