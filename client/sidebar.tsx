@@ -10,7 +10,6 @@ import { unhandledNeedsAubReason } from "../shared/needs-aub";
 import { CHECK_IN_DEDUPE_MS, formatQuiet, leadHealth } from "../shared/check-in";
 import { useBoardConfig } from "./config";
 import {
-  agentKind,
   compareAgents,
   leadShortId,
   projectLanes,
@@ -45,13 +44,11 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
   const { lanes, running } = useMemo(() => {
     const agents = [...board.agents.values()].sort(compareAgents);
     const live = agents.filter((agent) => !agent.archivedAt && agent.status !== "closed");
-    const leads = cfg.leadsPreset ? live.filter((agent) => agentKind(agent, cfg) === "lead") : [];
-    const brainstorms = cfg.brainstormPreset ? live.filter((agent) => agentKind(agent, cfg) === "brainstorm") : [];
     return {
-      lanes: projectLanes(leads, brainstorms, cfg),
+      lanes: cfg.leadsPreset || cfg.brainstormPreset ? projectLanes(live, cfg, now) : [],
       running: agents.filter((agent) => agent.status === "running").length,
     };
-  }, [board.agents, cfg]);
+  }, [board.agents, cfg, now]);
   const queue = useMemo(() => raisedHandsQueue([...board.agents.values()], cfg, now), [board.agents, cfg, now]);
   const workers = useMemo(
     () => runningWorkersByLead([...board.agents.values()], cfg, board.handoffs.relays),
@@ -243,6 +240,7 @@ export function AgentBoardSidebarItem(props: PluginSidebarItemProps) {
               </Pressable>
             ) : null}
             {attention ? <Chip theme={theme} label="!" tone="warning" /> : null}
+            {lane.idleCount > 0 ? <Chip theme={theme} label={`+${lane.idleCount} idle`} tone="muted" /> : null}
             {noBrainstorm ? <Text style={styles.muted}>{busy ? "…" : "＋ chat"}</Text> : null}
             {healthChip}
             {checkInButton}
